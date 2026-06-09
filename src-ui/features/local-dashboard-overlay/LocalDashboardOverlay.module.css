@@ -1,0 +1,118 @@
+.overlayRoot {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.region {
+  position: absolute;
+  pointer-events: none;
+}
+
+.stage {
+  position: relative;
+  transform-origin: top left;
+}
+
+.staticImage {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.dynamicControl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.editor {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d2d9df;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.editorHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.editorTitle {
+  margin: 0;
+  font-size: 16px;
+}
+
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.field input,
+.field select {
+  min-width: 0;
+  border: 1px solid #a8b3bd;
+  border-radius: 6px;
+  padding: 7px 8px;
+  color: #172033;
+  background: #ffffff;
+}
+
+.inlineCheck {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #172033;
+}
+
+.previewShell {
+  display: grid;
+  gap: 10px;
+}
+
+.previewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.previewHeader h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.previewFrame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  min-height: 240px;
+  border: 1px solid #9aa7b3;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    #202936;
+  background-size: 40px 40px;
+  overflow: hidden;
+}
