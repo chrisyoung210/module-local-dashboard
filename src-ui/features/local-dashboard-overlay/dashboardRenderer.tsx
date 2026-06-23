@@ -1,10 +1,11 @@
-import type { CSSProperties } from "react";
+import { memo, useMemo, type CSSProperties } from "react";
 import {
   formatGear,
   formatTelemetryValue,
   smoothGear,
-  type GearSmootherState
+  type GearSmootherState,
 } from "./telemetryFormat";
+import { evaluateTextExpression } from "./textExpression";
 import type {
   DashboardConditionalRule,
   DashboardControl,
@@ -12,7 +13,7 @@ import type {
   LiveFrame,
   OverlayAnchor,
   OverlayRegionConfig,
-  RegionRect
+  RegionRect,
 } from "./types";
 import styles from "./LocalDashboardOverlay.module.css";
 
@@ -71,7 +72,7 @@ export function computeRegionRect(input: RegionPositionInput): RegionRect {
     left: baseX + input.offsetX,
     top: baseY + input.offsetY,
     width,
-    height
+    height,
   };
 }
 
@@ -81,7 +82,7 @@ export function DashboardRegionRenderer({
   frame,
   gearState,
   layout,
-  region
+  region,
 }: {
   containerWidth: number;
   containerHeight: number;
@@ -98,7 +99,7 @@ export function DashboardRegionRenderer({
     scale: region.scale,
     anchor: region.anchor,
     offsetX: region.offsetX,
-    offsetY: region.offsetY
+    offsetY: region.offsetY,
   });
 
   return (
@@ -109,7 +110,7 @@ export function DashboardRegionRenderer({
         top: rect.top,
         width: rect.width,
         height: rect.height,
-        zIndex: region.zIndex
+        zIndex: region.zIndex,
       }}
     >
       <div
@@ -117,7 +118,7 @@ export function DashboardRegionRenderer({
         style={{
           width: layout.canvasWidth,
           height: layout.canvasHeight,
-          transform: `scale(${region.scale})`
+          transform: `scale(${region.scale})`,
         }}
       >
         <img
@@ -138,29 +139,123 @@ export function DashboardRegionRenderer({
   );
 }
 
-export function DynamicDashboardControl({
-  control,
-  frame,
-  gearState
-}: {
+interface DynamicDashboardControlProps {
   control: DashboardControl;
   frame: LiveFrame | null;
   gearState?: GearSmootherState;
-}) {
-  const style = computeControlStyle(control, frame);
+}
+
+const controlDependencyCache = new WeakMap<DashboardControl, string[]>();
+
+export const DynamicDashboardControl = memo(function DynamicDashboardControl({
+  control,
+  frame,
+  gearState,
+}: DynamicDashboardControlProps) {
+  const style = useMemo(
+    () => computeControlStyle(control, frame),
+    [control, frame],
+  );
+  const text = useMemo(
+    () => resolveControlText(control, frame, gearState),
+    [control, frame, gearState],
+  );
+
   return (
     <div className={styles.dynamicControl} style={style}>
-      {resolveControlText(control, frame, gearState)}
+      {text}
     </div>
+  );
+}, controlPropsAreEqual);
+
+function controlPropsAreEqual(
+  previous: DynamicDashboardControlProps,
+  next: DynamicDashboardControlProps,
+): boolean {
+  if (
+    previous.control !== next.control ||
+    previous.gearState !== next.gearState
+  ) {
+    return false;
+  }
+
+  return controlFrameInputsAreEqual(
+    next.control,
+    previous.frame,
+    next.frame,
+    next.gearState !== undefined,
+  );
+}
+
+export function controlDependencies(control: DashboardControl): string[] {
+  const cached = controlDependencyCache.get(control);
+  if (cached) return cached;
+
+  const dependencies = new Set<string>();
+  const template = control.textTemplate ?? "{value}";
+  const savedExpression = /^\s*\{\{expr:([\s\S]*)\}\}\s*$/.exec(template);
+  const dependencyTemplate = savedExpression?.[1] ?? template;
+
+  for (const match of dependencyTemplate.matchAll(/\{([^{}]+)\}/g)) {
+    const [rawField] = match[1].split("|");
+    const field = rawField === "value" ? control.telemetryField : rawField;
+    if (field) dependencies.add(field);
+  }
+
+  for (const rule of control.conditionalRules ?? []) {
+    dependencies.add(rule.telemetryField);
+  }
+
+  const result = [...dependencies];
+  controlDependencyCache.set(control, result);
+  return result;
+}
+
+export function controlFrameInputsAreEqual(
+  control: DashboardControl,
+  previous: LiveFrame | null,
+  next: LiveFrame | null,
+  usesGearSmoother = false,
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+
+  const dependencies = controlDependencies(control);
+  for (const field of dependencies) {
+    if (
+      !Object.is(readFrameValue(previous, field), readFrameValue(next, field))
+    ) {
+      return false;
+    }
+  }
+
+  return !(
+    usesGearSmoother &&
+    dependencies.includes("gear") &&
+    previous.timestampMs !== next.timestampMs
   );
 }
 
 export function resolveControlText(
   control: DashboardControl,
   frame: LiveFrame | null,
-  gearState?: GearSmootherState
+  gearState?: GearSmootherState,
 ): string {
   const template = control.textTemplate ?? "{value}";
+  const expression = /^\s*\{\{expr:([\s\S]*)\}\}\s*$/.exec(template);
+  if (expression) {
+    if (!frame) return "--";
+    try {
+      return evaluateTextExpression(
+        expression[1],
+        frame as unknown as Record<string, unknown>,
+        control.telemetryField,
+        control.format,
+      );
+    } catch {
+      return "";
+    }
+  }
   return template.replace(/\{([^}]+)\}/g, (_match, token: string) => {
     const [rawField, explicitFormat] = token.split("|");
     const field = rawField === "value" ? control.telemetryField : rawField;
@@ -171,7 +266,7 @@ export function resolveControlText(
       value = smoothGear(
         gearState,
         Number(value),
-        frame.timestampMs
+        frame.timestampMs,
       ).committedGear;
     }
 
@@ -185,9 +280,12 @@ export function resolveControlText(
 
 export function computeControlStyle(
   control: DashboardControl,
-  frame: LiveFrame | null
+  frame: LiveFrame | null,
 ): CSSProperties {
-  const conditionalStyle = evaluateConditionalRules(control.conditionalRules ?? [], frame);
+  const conditionalStyle = evaluateConditionalRules(
+    control.conditionalRules ?? [],
+    frame,
+  );
   return {
     position: "absolute",
     left: control.x,
@@ -196,20 +294,26 @@ export function computeControlStyle(
     height: control.height,
     fontSize: control.fontSize,
     color: conditionalStyle.color ?? control.textColor,
-    backgroundColor: conditionalStyle.backgroundColor ?? control.backgroundColor ?? "transparent"
+    backgroundColor:
+      conditionalStyle.backgroundColor ??
+      control.backgroundColor ??
+      "transparent",
   };
 }
 
 export function evaluateConditionalRules(
   rules: DashboardConditionalRule[],
-  frame: LiveFrame | null
+  frame: LiveFrame | null,
 ): { color?: string; backgroundColor?: string } {
   const style: { color?: string; backgroundColor?: string } = {};
   if (!frame) return style;
 
   for (const rule of rules) {
     const value = Number(readFrameValue(frame, rule.telemetryField));
-    if (!Number.isFinite(value) || !matchesRule(value, rule.operator, rule.compareValue)) {
+    if (
+      !Number.isFinite(value) ||
+      !matchesRule(value, rule.operator, rule.compareValue)
+    ) {
       continue;
     }
 
@@ -223,7 +327,11 @@ export function evaluateConditionalRules(
   return style;
 }
 
-function matchesRule(value: number, operator: string, compareValue: number): boolean {
+function matchesRule(
+  value: number,
+  operator: string,
+  compareValue: number,
+): boolean {
   switch (operator) {
     case "gt":
       return value > compareValue;

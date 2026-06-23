@@ -4,6 +4,5 @@ node_modules/
 dist/
 gen/
 src-ui/dist/
-docs/
 *.log
 local_dashboard_overlay.json

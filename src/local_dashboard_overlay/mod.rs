@@ -1,4 +1,5 @@
 pub mod acc_window;
+pub mod commands;
 pub mod config;
 pub mod window;
 

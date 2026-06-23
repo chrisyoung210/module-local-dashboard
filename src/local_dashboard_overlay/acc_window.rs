@@ -46,7 +46,14 @@ pub fn find_acc_window_bounds() -> Result<Option<AccWindowBounds>, String> {
 
         let title = String::from_utf16_lossy(&title_buffer[..copied as usize]);
         let lowered = title.to_lowercase();
-        if !lowered.contains("assetto corsa competizione") && !lowered.contains("acc") {
+        if lowered.contains("acc coach") || lowered.contains("local dashboard overlay") {
+            return 1;
+        }
+        let is_acc_window = lowered.contains("assetto corsa competizione")
+            || lowered == "acc"
+            || lowered.starts_with("acc ")
+            || lowered.ends_with(" acc");
+        if !is_acc_window {
             return 1;
         }
 

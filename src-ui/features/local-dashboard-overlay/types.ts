@@ -17,6 +17,8 @@ export interface LocalDashboardOverlayConfig {
   hideWhenNotLive: boolean;
   followAccWindow: boolean;
   clickThrough: boolean;
+  dashboardWidth: number;
+  dashboardHeight: number;
   polling: OverlayPollingConfig;
   regions: OverlayRegionConfig[];
 }

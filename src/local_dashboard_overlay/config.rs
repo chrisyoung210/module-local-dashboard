@@ -7,6 +7,8 @@ use std::{
 
 pub const OVERLAY_CONFIG_SCHEMA: &str = "acc-coach.local-dashboard-overlay.v1";
 pub const OVERLAY_CONFIG_VERSION: u32 = 1;
+pub const DEFAULT_DASHBOARD_WIDTH: u32 = 3840;
+pub const DEFAULT_DASHBOARD_HEIGHT: u32 = 2160;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +20,10 @@ pub struct LocalDashboardOverlayConfig {
     pub hide_when_not_live: bool,
     pub follow_acc_window: bool,
     pub click_through: bool,
+    #[serde(default = "default_dashboard_width")]
+    pub dashboard_width: u32,
+    #[serde(default = "default_dashboard_height")]
+    pub dashboard_height: u32,
     pub polling: OverlayPollingConfig,
     pub regions: Vec<OverlayRegionConfig>,
 }
@@ -68,6 +74,8 @@ impl Default for LocalDashboardOverlayConfig {
             hide_when_not_live: true,
             follow_acc_window: true,
             click_through: true,
+            dashboard_width: DEFAULT_DASHBOARD_WIDTH,
+            dashboard_height: DEFAULT_DASHBOARD_HEIGHT,
             polling: OverlayPollingConfig::default(),
             regions: Vec::new(),
         }
@@ -78,7 +86,7 @@ impl Default for OverlayPollingConfig {
     fn default() -> Self {
         Self {
             status_ms: 500,
-            frame_ms: 100,
+            frame_ms: 33,
             window_ms: 500,
         }
     }
@@ -114,8 +122,10 @@ impl LocalDashboardOverlayConfig {
 
     pub fn normalized(mut self) -> Self {
         self.polling.status_ms = self.polling.status_ms.clamp(250, 5000);
-        self.polling.frame_ms = self.polling.frame_ms.clamp(33, 1000);
+        self.polling.frame_ms = self.polling.frame_ms.clamp(16, 1000);
         self.polling.window_ms = self.polling.window_ms.clamp(250, 5000);
+        self.dashboard_width = self.dashboard_width.clamp(1, 16_384);
+        self.dashboard_height = self.dashboard_height.clamp(1, 16_384);
 
         let timestamp = current_time_millis();
         for (index, region) in self.regions.iter_mut().enumerate() {
@@ -148,6 +158,14 @@ impl LocalDashboardOverlayConfig {
     }
 }
 
+fn default_dashboard_width() -> u32 {
+    DEFAULT_DASHBOARD_WIDTH
+}
+
+fn default_dashboard_height() -> u32 {
+    DEFAULT_DASHBOARD_HEIGHT
+}
+
 fn current_time_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -171,9 +189,11 @@ mod tests {
 
     #[test]
     fn default_config_serializes_with_schema_and_version() {
-        let json = serde_json::to_string(&LocalDashboardOverlayConfig::default()).unwrap();
+        let config = LocalDashboardOverlayConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains(OVERLAY_CONFIG_SCHEMA));
         assert!(json.contains("\"version\":1"));
+        assert_eq!(config.polling.frame_ms, 33);
     }
 
     #[test]
@@ -236,5 +256,13 @@ mod tests {
         assert_eq!(config.polling.window_ms, 250);
         assert_eq!(config.regions[0].scale, 5.0);
         assert!(!config.regions[0].id.is_empty());
+    }
+
+    #[test]
+    fn normalization_allows_sixty_hz_frame_interval() {
+        let mut config = LocalDashboardOverlayConfig::default();
+        config.polling.frame_ms = 16;
+
+        assert_eq!(config.normalized().polling.frame_ms, 16);
     }
 }
