@@ -12,31 +12,32 @@ import {
   formatLapTime,
   smoothGear,
 } from "./telemetryFormat";
-import type { DashboardControl, LiveFrame, OverlayAnchor } from "./types";
+import type { DashboardControl, DashboardValuesFrame, OverlayAnchor } from "./types";
 
-const frame: LiveFrame = {
-  speedKmh: 123.4,
-  brakePct: 0,
-  throttlePct: 73,
-  gear: 3,
-  rpm: 7000,
-  steeringDeg: 0,
-  distanceM: 0,
-  currentLapDistanceM: 100,
-  speedIntegratedLapDistanceM: 100,
-  lapNumber: 2,
-  position: 5,
-  sessionTimeLeftS: 300,
-  inPit: false,
-  trackName: "Monza",
-  carModel: "GT3",
-  timestampMs: 1000,
-  currentLapTimeMs: 108326,
-  normalizedCarPosition: 0.5,
-  bestLapDeltaTimeMs: -180,
-  predictedLapTimeByBest: 108000,
-  sessionLapDeltaTimeMs: 320,
-  predictedLapTimeBySession: 109000,
+const frame: DashboardValuesFrame = {
+  sampleTick: 0,
+  timestampNs: 1_000_000_000,
+  values: {
+    speedKmh: 123.4,
+    brakePct: 0,
+    throttlePct: 73,
+    gear: 4,
+    rpm: 7000,
+    steeringDeg: 0,
+    distanceM: 0,
+    currentLapDistanceM: 100,
+    speedIntegratedLapDistanceM: 100,
+    lapNumber: 2,
+    position: 5,
+    sessionTimeLeftS: 300,
+    currentLapTimeMs: 108326,
+    normalizedCarPosition: 0.5,
+    bestLapDeltaTimeMs: -180,
+    predictedLapTimeByBest: 108000,
+    sessionLapDeltaTimeMs: 320,
+    predictedLapTimeBySession: 109000,
+    "calc:delta_time_to_session_best_lap": 1000,
+  },
 };
 
 describe("computeRegionRect", () => {
@@ -106,17 +107,15 @@ describe("formatting", () => {
         '{{expr:(({calc:delta_time_to_session_best_lap}) >= 0 ? "+" : "") + {calc:delta_time_to_session_best_lap|s.ff}}}',
     });
 
+    expect(resolveControlText(control, frame)).toBe("+1.00");
     expect(
       resolveControlText(control, {
         ...frame,
-        "calc:delta_time_to_session_best_lap": 1000,
-      } as LiveFrame),
-    ).toBe("+1.00");
-    expect(
-      resolveControlText(control, {
-        ...frame,
-        "calc:delta_time_to_session_best_lap": -250,
-      } as LiveFrame),
+        values: {
+          ...frame.values,
+          "calc:delta_time_to_session_best_lap": -250,
+        },
+      }),
     ).toBe("-0.25");
   });
 
@@ -127,26 +126,33 @@ describe("formatting", () => {
     expect(
       resolveControlText(controlWith({ textTemplate: "{gear}" }), {
         ...frame,
-        gear: 0,
+        values: { ...frame.values, gear: 0 },
+      }),
+    ).toBe("R");
+    expect(
+      resolveControlText(controlWith({ textTemplate: "{gear}" }), {
+        ...frame,
+        values: { ...frame.values, gear: 1 },
       }),
     ).toBe("N");
     expect(
       resolveControlText(controlWith({ textTemplate: "{gear}" }), {
         ...frame,
-        gear: -1,
+        values: { ...frame.values, gear: -1 },
       }),
     ).toBe("R");
   });
 
   it("smooths short neutral flicker during gear changes", () => {
-    let state = createInitialGearSmootherState(3);
-    state = smoothGear(state, 0, 1000);
-    expect(state.committedGear).toBe(3);
-    state = smoothGear(state, 4, 1100);
+    let state = createInitialGearSmootherState(4);
+    const gearMs = Math.floor(frame.timestampNs / 1_000_000);
+    state = smoothGear(state, 1, gearMs);
     expect(state.committedGear).toBe(4);
-    state = smoothGear(state, 0, 1200);
-    state = smoothGear(state, 0, 1400);
-    expect(state.committedGear).toBe(0);
+    state = smoothGear(state, 5, gearMs + 100);
+    expect(state.committedGear).toBe(5);
+    state = smoothGear(state, 1, gearMs + 200);
+    state = smoothGear(state, 1, gearMs + 400);
+    expect(state.committedGear).toBe(1);
   });
 });
 
@@ -211,14 +217,20 @@ describe("control memoization", () => {
     expect(
       controlFrameInputsAreEqual(control, frame, {
         ...frame,
-        rpm: frame.rpm + 100,
-        timestampMs: frame.timestampMs + 16,
+        values: {
+          ...frame.values,
+          rpm: frame.values.rpm + 100,
+        },
+        timestampNs: frame.timestampNs + 16_000_000,
       }),
     ).toBe(true);
     expect(
       controlFrameInputsAreEqual(control, frame, {
         ...frame,
-        speedKmh: frame.speedKmh + 1,
+        values: {
+          ...frame.values,
+          speedKmh: frame.values.speedKmh + 1,
+        },
       }),
     ).toBe(false);
   });
@@ -236,7 +248,7 @@ describe("control memoization", () => {
       controlFrameInputsAreEqual(
         control,
         frame,
-        { ...frame, timestampMs: frame.timestampMs + 16 },
+        { ...frame, timestampNs: frame.timestampNs + 16_000_000 },
         true,
       ),
     ).toBe(false);
@@ -246,12 +258,16 @@ describe("control memoization", () => {
 function controlWith(patch: Partial<DashboardControl>): DashboardControl {
   return {
     id: "control",
+    widgetType: "text",
+    refreshHz: 30,
     x: 0,
     y: 0,
     width: 100,
     height: 20,
     fontSize: 12,
     textColor: "#fff",
+    chartFields: [],
+    conditionalRules: [],
     ...patch,
-  };
+  } as DashboardControl;
 }

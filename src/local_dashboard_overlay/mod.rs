@@ -1,6 +1,6 @@
 pub mod acc_window;
-pub mod commands;
 pub mod config;
+pub mod frame_bus;
 pub mod window;
 
 pub fn setup(app: &tauri::App) -> Result<(), String> {

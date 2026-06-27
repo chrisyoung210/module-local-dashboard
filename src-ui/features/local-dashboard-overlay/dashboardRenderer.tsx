@@ -1,4 +1,4 @@
-import { memo, useMemo, type CSSProperties } from "react";
+import { memo, useMemo, useRef, useEffect, type CSSProperties } from "react";
 import {
   formatGear,
   formatTelemetryValue,
@@ -6,16 +6,34 @@ import {
   type GearSmootherState,
 } from "./telemetryFormat";
 import { evaluateTextExpression } from "./textExpression";
+
 import type {
   DashboardConditionalRule,
   DashboardControl,
   DashboardLayoutPayload,
-  LiveFrame,
+  DashboardValuesFrame,
   OverlayAnchor,
   OverlayRegionConfig,
   RegionRect,
+  WidgetType,
 } from "./types";
 import styles from "./LocalDashboardOverlay.module.css";
+
+// ── Color conversion ─────────────────────────────────────────────────
+
+function toCssColor(hex: string | null | undefined): string | undefined {
+  if (!hex || !hex.startsWith("#") || hex.length !== 9) return hex ?? undefined;
+  return "#" + hex.slice(3, 9) + hex.slice(1, 3);
+}
+
+// ── Shared types ─────────────────────────────────────────────────────
+
+interface BufferEntry {
+  t: number;
+  v: number;
+}
+
+// ── Region positioning ──────────────────────────────────────────────
 
 export interface RegionPositionInput {
   containerWidth: number;
@@ -76,17 +94,23 @@ export function computeRegionRect(input: RegionPositionInput): RegionRect {
   };
 }
 
+// ── Region renderer ─────────────────────────────────────────────────
+
 export function DashboardRegionRenderer({
   containerWidth,
   containerHeight,
   frame,
+  historyBuffer,
+  trackPoints,
   gearState,
   layout,
   region,
 }: {
   containerWidth: number;
   containerHeight: number;
-  frame: LiveFrame | null;
+  frame: DashboardValuesFrame | null;
+  historyBuffer: Map<string, BufferEntry[]>;
+  trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
   gearState?: GearSmootherState;
   layout: DashboardLayoutPayload;
   region: OverlayRegionConfig;
@@ -126,11 +150,13 @@ export function DashboardRegionRenderer({
           src={`data:${layout.imageMime};base64,${layout.staticImageBase64}`}
           alt=""
         />
-        {layout.dynamicControls.map((control) => (
+        {layout.controls.map((control) => (
           <DynamicDashboardControl
             key={control.id}
             control={control}
             frame={frame}
+            historyBuffer={historyBuffer}
+            trackPoints={trackPoints}
             gearState={gearState}
           />
         ))}
@@ -139,19 +165,97 @@ export function DashboardRegionRenderer({
   );
 }
 
+// ── Widget type dispatch ────────────────────────────────────────────
+
 interface DynamicDashboardControlProps {
   control: DashboardControl;
-  frame: LiveFrame | null;
+  frame: DashboardValuesFrame | null;
+  historyBuffer: Map<string, BufferEntry[]>;
+  trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
   gearState?: GearSmootherState;
 }
 
-const controlDependencyCache = new WeakMap<DashboardControl, string[]>();
+function resolveWidgetType(control: DashboardControl): WidgetType {
+  return control.widgetType;
+}
 
 export const DynamicDashboardControl = memo(function DynamicDashboardControl({
   control,
   frame,
+  historyBuffer,
+  trackPoints,
   gearState,
 }: DynamicDashboardControlProps) {
+  const widgetType = resolveWidgetType(control);
+
+  switch (widgetType) {
+    case "static":
+      return null;
+    case "chart":
+      return (
+        <ChartWidget
+          control={control}
+          historyBuffer={historyBuffer}
+        />
+      );
+    case "map":
+      return (
+        <MapWidget control={control} frame={frame} trackPoints={trackPoints} />
+      );
+    case "text":
+    default:
+      return (
+        <TextWidget control={control} frame={frame} gearState={gearState} />
+      );
+  }
+}, controlPropsAreEqual);
+
+function controlPropsAreEqual(
+  previous: DynamicDashboardControlProps,
+  next: DynamicDashboardControlProps,
+): boolean {
+  if (
+    previous.control !== next.control ||
+    previous.gearState !== next.gearState ||
+    previous.historyBuffer !== next.historyBuffer ||
+    previous.trackPoints !== next.trackPoints
+  ) {
+    return false;
+  }
+
+  const wt = resolveWidgetType(next.control);
+  if (wt === "chart") {
+    return true;
+  }
+
+  if (wt === "map") {
+    const tf = next.control.telemetryField || "normalizedCarPosition";
+    const pv = previous.frame?.values[tf];
+    const nv = next.frame?.values[tf];
+    return Object.is(pv, nv);
+  }
+
+  return controlFrameInputsAreEqual(
+    next.control,
+    previous.frame,
+    next.frame,
+    next.gearState !== undefined,
+  );
+}
+
+// ── Text widget ─────────────────────────────────────────────────────
+
+interface TextWidgetProps {
+  control: DashboardControl;
+  frame: DashboardValuesFrame | null;
+  gearState?: GearSmootherState;
+}
+
+const TextWidget = memo(function TextWidget({
+  control,
+  frame,
+  gearState,
+}: TextWidgetProps) {
   const style = useMemo(
     () => computeControlStyle(control, frame),
     [control, frame],
@@ -166,26 +270,11 @@ export const DynamicDashboardControl = memo(function DynamicDashboardControl({
       {text}
     </div>
   );
-}, controlPropsAreEqual);
+});
 
-function controlPropsAreEqual(
-  previous: DynamicDashboardControlProps,
-  next: DynamicDashboardControlProps,
-): boolean {
-  if (
-    previous.control !== next.control ||
-    previous.gearState !== next.gearState
-  ) {
-    return false;
-  }
+// ── Dependency tracking ─────────────────────────────────────────────
 
-  return controlFrameInputsAreEqual(
-    next.control,
-    previous.frame,
-    next.frame,
-    next.gearState !== undefined,
-  );
-}
+const controlDependencyCache = new WeakMap<DashboardControl, string[]>();
 
 export function controlDependencies(control: DashboardControl): string[] {
   const cached = controlDependencyCache.get(control);
@@ -213,18 +302,18 @@ export function controlDependencies(control: DashboardControl): string[] {
 
 export function controlFrameInputsAreEqual(
   control: DashboardControl,
-  previous: LiveFrame | null,
-  next: LiveFrame | null,
+  previous: DashboardValuesFrame | null,
+  next: DashboardValuesFrame | null,
   usesGearSmoother = false,
 ): boolean {
   if (previous === next) return true;
   if (!previous || !next) return false;
 
+  const prevValues = previous.values;
+  const nextValues = next.values;
   const dependencies = controlDependencies(control);
   for (const field of dependencies) {
-    if (
-      !Object.is(readFrameValue(previous, field), readFrameValue(next, field))
-    ) {
+    if (!Object.is(prevValues[field], nextValues[field])) {
       return false;
     }
   }
@@ -232,13 +321,15 @@ export function controlFrameInputsAreEqual(
   return !(
     usesGearSmoother &&
     dependencies.includes("gear") &&
-    previous.timestampMs !== next.timestampMs
+    previous.timestampNs !== next.timestampNs
   );
 }
 
+// ── Text resolution ─────────────────────────────────────────────────
+
 export function resolveControlText(
   control: DashboardControl,
-  frame: LiveFrame | null,
+  frame: DashboardValuesFrame | null,
   gearState?: GearSmootherState,
 ): string {
   const template = control.textTemplate ?? "{value}";
@@ -248,9 +339,9 @@ export function resolveControlText(
     try {
       return evaluateTextExpression(
         expression[1],
-        frame as unknown as Record<string, unknown>,
-        control.telemetryField,
-        control.format,
+        frame.values as unknown as Record<string, unknown>,
+        control.telemetryField ?? undefined,
+        control.format ?? undefined,
       );
     } catch {
       return "";
@@ -258,16 +349,15 @@ export function resolveControlText(
   }
   return template.replace(/\{([^}]+)\}/g, (_match, token: string) => {
     const [rawField, explicitFormat] = token.split("|");
-    const field = rawField === "value" ? control.telemetryField : rawField;
+    const field = rawField === "value" ? (control.telemetryField ?? control.id) : rawField;
     if (!field || !frame) return "--";
 
-    let value = readFrameValue(frame, field);
+    let value = frame.values[field];
+    if (value === undefined) return "--";
+
     if (field === "gear" && gearState) {
-      value = smoothGear(
-        gearState,
-        Number(value),
-        frame.timestampMs,
-      ).committedGear;
+      const gearMs = Math.floor(frame.timestampNs / 1_000_000);
+      value = smoothGear(gearState, Number(value), gearMs).committedGear;
     }
 
     if (field === "gear" && !explicitFormat && !control.format) {
@@ -278,9 +368,11 @@ export function resolveControlText(
   });
 }
 
+// ── Control styling ─────────────────────────────────────────────────
+
 export function computeControlStyle(
   control: DashboardControl,
-  frame: LiveFrame | null,
+  frame: DashboardValuesFrame | null,
 ): CSSProperties {
   const conditionalStyle = evaluateConditionalRules(
     control.conditionalRules ?? [],
@@ -292,25 +384,26 @@ export function computeControlStyle(
     top: control.y,
     width: control.width,
     height: control.height,
-    fontSize: control.fontSize,
-    color: conditionalStyle.color ?? control.textColor,
+    fontSize: control.fontSize ?? 12,
+    color: toCssColor(conditionalStyle.color ?? control.textColor) ?? "#fff",
     backgroundColor:
-      conditionalStyle.backgroundColor ??
-      control.backgroundColor ??
+      toCssColor(conditionalStyle.backgroundColor ??
+      control.backgroundColor) ??
       "transparent",
   };
 }
 
 export function evaluateConditionalRules(
   rules: DashboardConditionalRule[],
-  frame: LiveFrame | null,
+  frame: DashboardValuesFrame | null,
 ): { color?: string; backgroundColor?: string } {
   const style: { color?: string; backgroundColor?: string } = {};
   if (!frame) return style;
 
   for (const rule of rules) {
-    const value = Number(readFrameValue(frame, rule.telemetryField));
+    const value = frame.values[rule.telemetryField];
     if (
+      value === undefined ||
       !Number.isFinite(value) ||
       !matchesRule(value, rule.operator, rule.compareValue)
     ) {
@@ -318,10 +411,10 @@ export function evaluateConditionalRules(
     }
 
     if (rule.target === "textColor") {
-      style.color = rule.color;
+      style.color = toCssColor(rule.color) ?? rule.color;
     }
     if (rule.target === "backgroundColor") {
-      style.backgroundColor = rule.color;
+      style.backgroundColor = toCssColor(rule.color) ?? rule.color;
     }
   }
   return style;
@@ -350,6 +443,190 @@ function matchesRule(
   }
 }
 
-function readFrameValue(frame: LiveFrame, field: string): unknown {
-  return (frame as unknown as Record<string, unknown>)[field];
+// ── Chart widget (reads from local historyBuffer, time-independent) ──
+
+interface ChartWidgetProps {
+  control: DashboardControl;
+  historyBuffer: Map<string, BufferEntry[]>;
+}
+
+function ChartWidget({ control, historyBuffer }: ChartWidgetProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fields = control.chartFields ?? [];
+  const N = (control as any).chartSampleCount ?? control.chartSampleCount ?? 600;
+  const { width, height } = control;
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (fields.length === 0) return;
+
+    for (const field of fields) {
+      const key = (field as any).telemetryField ?? "";
+      const entries = historyBuffer.get(key);
+      console.log(
+        `[ChartWidget] id="${control.id}" key="${key}" entries=${entries?.length ?? 0} color=${field.color} defaultValue=${field.defaultValue}`,
+      );
+      if (!entries || entries.length === 0) continue;
+
+      const points = entries.slice(-N);
+      console.log(
+        `[ChartWidget] id="${control.id}" field="${field.telemetryField}" points=${points.length} firstV=${points[0]?.v} lastV=${points[points.length - 1]?.v}`,
+      );
+
+      if (points.length < 2) continue;
+
+      ctx.strokeStyle = field.color || "#fff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      const pointsMinusOne = Math.max(points.length - 1, 1);
+      for (let i = 0; i < points.length; i++) {
+        const x = (i / pointsMinusOne) * width;
+        const y = (1 - points[i].v) * height;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }, [control, historyBuffer, width, height, fields, N]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: "absolute",
+        left: control.x,
+        top: control.y,
+        width,
+        height,
+        backgroundColor: toCssColor(control.backgroundColor) ?? "transparent",
+      }}
+    />
+  );
+}
+
+// ── Map widget ──────────────────────────────────────────────────────
+
+interface MapWidgetProps {
+  control: DashboardControl;
+  frame: DashboardValuesFrame | null;
+  trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
+}
+
+function MapWidget({ control, frame, trackPoints }: MapWidgetProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { width, height, trackId } = control;
+  const dotColor = control.dotColor ?? "#ff0";
+  const dotSize = control.dotSize ?? 6;
+  const effectiveTrackId = trackId || "monza";
+  const trackData = effectiveTrackId ? trackPoints[effectiveTrackId] : undefined;
+  const points = trackData?.points;
+  const angleDeg = trackData?.angleDeg ?? 0;
+  const flipX = trackData?.flipX ?? 1;
+  const flipZ = trackData?.flipZ ?? 1;
+  const carX =
+    frame ? frame.values["carX"] : undefined;
+  const carZ =
+    frame ? frame.values["carZ"] : undefined;
+
+  console.log(
+    `[MapWidget] id="${control.id}" trackId="${control.trackId ?? "(none)"}" frame=${frame ? "yes" : "null"} frameKeys=[${frame ? Object.keys(frame.values).slice(0, 10).join(", ") : ""}] carX=${carX} carZ=${carZ} points=${points?.length ?? 0}`,
+  );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (!points || points.length < 2) {
+      ctx.fillStyle = "#888";
+      ctx.font = `${Math.max(10, height / 6)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText("No track data", width / 2, height / 2);
+      return;
+    }
+
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of points) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+    }
+    const trackW = maxX - minX || 1;
+    const trackH = maxZ - minZ || 1;
+
+    const scale = Math.min(width / trackW, height / trackH) * 0.9;
+    const offsetX = (width - trackW * scale) / 2;
+    const offsetY = (height - trackH * scale) / 2;
+
+    ctx.strokeStyle = "#888";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < points.length; i++) {
+      const sx = (points[i].x - minX) * scale + offsetX;
+      const sy = -(points[i].z - maxZ) * scale + offsetY;
+      if (i === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+
+    if (carX !== undefined && Number.isFinite(carX) && carZ !== undefined && Number.isFinite(carZ)) {
+      let rCarX = carX as number;
+      let rCarZ = carZ as number;
+      if (angleDeg !== 0) {
+        const rad = (-angleDeg * Math.PI) / 180;
+        const cos = Math.cos(rad), sin = Math.sin(rad);
+        const cx = rCarX, cz = rCarZ;
+        rCarX = cx * cos - cz * sin;
+        rCarZ = cx * sin + cz * cos;
+      }
+      if (flipX !== 1.0) rCarX = -rCarX;
+      if (flipZ !== 1.0) rCarZ = -rCarZ;
+
+      rCarX = Math.max(minX, Math.min(maxX, rCarX));
+      rCarZ = Math.max(minZ, Math.min(maxZ, rCarZ));
+
+      const cx = (rCarX - minX) * scale + offsetX;
+      const cy = -(rCarZ - maxZ) * scale + offsetY;
+
+      ctx.fillStyle = dotColor ?? "#ff0";
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotSize ?? 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }, [points, carX, carZ, width, height, dotColor, dotSize, angleDeg, flipX, flipZ]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: "absolute",
+        left: control.x,
+        top: control.y,
+        width,
+        height,
+        backgroundColor: toCssColor(control.backgroundColor) ?? "transparent",
+      }}
+    />
+  );
 }

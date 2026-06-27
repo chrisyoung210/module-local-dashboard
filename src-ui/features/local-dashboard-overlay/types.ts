@@ -1,3 +1,21 @@
+// ── Protocol types (imported from module_dashboard_protocol/types) ──
+
+export type {
+  ChartFieldConfig,
+  DashboardConditionalRule,
+  DashboardControl,
+  DashboardLayoutPayload,
+  DashboardTextFormat,
+  DashboardTextFormatOrRaw,
+  DashboardValuesFrame,
+  RegisteredDashboardLayout,
+  WidgetType,
+} from "module_dashboard_protocol/types";
+
+
+
+// ── Module-owned types ──
+
 export type OverlayAnchor =
   | "topLeft"
   | "topCenter"
@@ -17,8 +35,6 @@ export interface LocalDashboardOverlayConfig {
   hideWhenNotLive: boolean;
   followAccWindow: boolean;
   clickThrough: boolean;
-  dashboardWidth: number;
-  dashboardHeight: number;
   polling: OverlayPollingConfig;
   regions: OverlayRegionConfig[];
 }
@@ -56,79 +72,23 @@ export interface AutoRecordingStatus {
   connected: boolean;
 }
 
-export interface LiveFrame {
-  speedKmh: number;
-  brakePct: number;
-  throttlePct: number;
-  gear: number;
-  rpm: number;
-  steeringDeg: number;
-  distanceM: number;
-  currentLapDistanceM: number | null;
-  speedIntegratedLapDistanceM: number | null;
-  lapNumber: number;
-  position: number;
-  sessionTimeLeftS: number;
-  inPit: boolean;
-  trackName: string | null;
-  carModel: string | null;
-  timestampMs: number;
-  currentLapTimeMs: number | null;
-  normalizedCarPosition: number | null;
-  bestLapDeltaTimeMs: number | null;
-  predictedLapTimeByBest: number | null;
-  sessionLapDeltaTimeMs: number | null;
-  predictedLapTimeBySession: number | null;
-}
-
-export type DashboardTextFormat =
-  | "number"
-  | "integer"
-  | "delta"
-  | "lapTime"
-  | "percent"
-  | "gear";
-
-export interface RegisteredDashboardLayout {
-  id: string;
-  name: string;
-  payload: DashboardLayoutPayload;
-}
-
-export interface DashboardLayoutPayload {
-  canvasWidth: number;
-  canvasHeight: number;
-  imageMime: string;
-  staticImageBase64: string;
-  dynamicControls: DashboardControl[];
-}
-
-export interface DashboardControl {
-  id: string;
-  telemetryField?: keyof LiveFrame | string;
-  textTemplate?: string;
-  format?: DashboardTextFormat | string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  fontSize: number;
-  textColor: string;
-  backgroundColor?: string | null;
-  conditionalRules?: DashboardConditionalRule[];
-}
-
-export interface DashboardConditionalRule {
-  target: "textColor" | "backgroundColor" | string;
-  telemetryField: keyof LiveFrame | string;
-  operator: "gt" | "gte" | "lt" | "lte" | "eq" | "neq" | string;
-  compareValue: number;
-  color: string;
-}
+// ── Renderer types ──
 
 export interface RegionRect {
   left: number;
   top: number;
   width: number;
   height: number;
+}
+
+/** Chart history point injected by the main module. */
+export interface FieldHistoryPoint {
+  t: number;
+  v: number;
+}
+
+/** Per-field chart history buffer injected by the main module. */
+export interface FieldHistory {
+  field_name: string;
+  points: FieldHistoryPoint[];
 }

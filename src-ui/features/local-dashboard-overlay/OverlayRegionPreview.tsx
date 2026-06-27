@@ -1,35 +1,34 @@
 import { DashboardRegionRenderer } from "./dashboardRenderer";
 import type {
-  LiveFrame,
+  DashboardValuesFrame,
   LocalDashboardOverlayConfig,
   RegisteredDashboardLayout
 } from "./types";
 import styles from "./LocalDashboardOverlay.module.css";
 
-const previewFrame: LiveFrame = {
-  speedKmh: 164,
-  brakePct: 0,
-  throttlePct: 73,
-  gear: 4,
-  rpm: 7420,
-  steeringDeg: 0,
-  distanceM: 0,
-  currentLapDistanceM: 1320,
-  speedIntegratedLapDistanceM: 1320,
-  lapNumber: 8,
-  position: 3,
-  sessionTimeLeftS: 622,
-  inPit: false,
-  trackName: "Monza",
-  carModel: "McLaren 720S GT3 Evo",
-  timestampMs: 1000,
-  currentLapTimeMs: 68326,
-  normalizedCarPosition: 0.42,
-  bestLapDeltaTimeMs: -180,
-  predictedLapTimeByBest: 108326,
-  sessionLapDeltaTimeMs: 320,
-  predictedLapTimeBySession: 108820
+const previewFrame: DashboardValuesFrame = {
+  sampleTick: 0,
+  timestampNs: 1_000_000_000,
+  values: {
+    speedKmh: 164,
+    brakePct: 0,
+    throttlePct: 73,
+    gear: 5,
+    rpm: 7420,
+    steeringDeg: 0,
+    distanceM: 0,
+    currentLapDistanceM: 1320,
+    lapNumber: 8,
+    position: 3,
+    sessionTimeLeftS: 622,
+    normalizedCarPosition: 0.42,
+    bestLapDeltaTimeMs: -180,
+    sessionLapDeltaTimeMs: 320,
+  },
 };
+
+const emptyHistoryBuffer = new Map();
+const emptyTrackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }> = {};
 
 export function OverlayRegionPreview({
   config,
@@ -61,6 +60,8 @@ export function OverlayRegionPreview({
                 containerWidth={width}
                 containerHeight={height}
                 frame={previewFrame}
+                historyBuffer={emptyHistoryBuffer}
+                trackPoints={emptyTrackPoints}
                 layout={layout}
                 region={region}
               />

@@ -14,7 +14,10 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "paths": {
+      "module_dashboard_protocol/*": ["../module_dashboard_protocol/*"]
+    }
   },
   "include": ["src-ui"],
   "references": [{ "path": "./tsconfig.node.json" }]

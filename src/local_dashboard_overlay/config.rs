@@ -7,8 +7,6 @@ use std::{
 
 pub const OVERLAY_CONFIG_SCHEMA: &str = "acc-coach.local-dashboard-overlay.v1";
 pub const OVERLAY_CONFIG_VERSION: u32 = 1;
-pub const DEFAULT_DASHBOARD_WIDTH: u32 = 3840;
-pub const DEFAULT_DASHBOARD_HEIGHT: u32 = 2160;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -20,10 +18,6 @@ pub struct LocalDashboardOverlayConfig {
     pub hide_when_not_live: bool,
     pub follow_acc_window: bool,
     pub click_through: bool,
-    #[serde(default = "default_dashboard_width")]
-    pub dashboard_width: u32,
-    #[serde(default = "default_dashboard_height")]
-    pub dashboard_height: u32,
     pub polling: OverlayPollingConfig,
     pub regions: Vec<OverlayRegionConfig>,
 }
@@ -74,8 +68,6 @@ impl Default for LocalDashboardOverlayConfig {
             hide_when_not_live: true,
             follow_acc_window: true,
             click_through: true,
-            dashboard_width: DEFAULT_DASHBOARD_WIDTH,
-            dashboard_height: DEFAULT_DASHBOARD_HEIGHT,
             polling: OverlayPollingConfig::default(),
             regions: Vec::new(),
         }
@@ -122,10 +114,8 @@ impl LocalDashboardOverlayConfig {
 
     pub fn normalized(mut self) -> Self {
         self.polling.status_ms = self.polling.status_ms.clamp(250, 5000);
-        self.polling.frame_ms = self.polling.frame_ms.clamp(16, 1000);
+        self.polling.frame_ms = self.polling.frame_ms.clamp(33, 1000);
         self.polling.window_ms = self.polling.window_ms.clamp(250, 5000);
-        self.dashboard_width = self.dashboard_width.clamp(1, 16_384);
-        self.dashboard_height = self.dashboard_height.clamp(1, 16_384);
 
         let timestamp = current_time_millis();
         for (index, region) in self.regions.iter_mut().enumerate() {
@@ -156,14 +146,6 @@ impl LocalDashboardOverlayConfig {
         }
         Ok(())
     }
-}
-
-fn default_dashboard_width() -> u32 {
-    DEFAULT_DASHBOARD_WIDTH
-}
-
-fn default_dashboard_height() -> u32 {
-    DEFAULT_DASHBOARD_HEIGHT
 }
 
 fn current_time_millis() -> u128 {
@@ -261,8 +243,8 @@ mod tests {
     #[test]
     fn normalization_allows_sixty_hz_frame_interval() {
         let mut config = LocalDashboardOverlayConfig::default();
-        config.polling.frame_ms = 16;
+        config.polling.frame_ms = 33;
 
-        assert_eq!(config.normalized().polling.frame_ms, 16);
+        assert_eq!(config.normalized().polling.frame_ms, 33);
     }
 }

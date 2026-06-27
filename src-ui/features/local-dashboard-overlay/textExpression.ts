@@ -28,15 +28,6 @@ const OPERATORS = [
   "!",
 ];
 
-const MILLISECOND_CALCULATED_FIELDS = new Set([
-  "calc:delta_time_to_life_best_lap",
-  "calc:delta_time_to_session_best_lap",
-  "calc:prev_sector_time",
-  "calc:sector_best_1",
-  "calc:sector_best_2",
-  "calc:sector_best_3",
-]);
-
 function tokenize(expression: string): Token[] {
   const tokens: Token[] = [];
   let index = 0;
@@ -260,52 +251,15 @@ class Parser {
 function formatExpressionValue(
   value: unknown,
   format: string | undefined,
-  field: string,
+  _field: string,
 ): string {
   if (!format)
     return typeof value === "string" ? JSON.stringify(value) : String(value);
   const numeric = Number(value);
-  if (
-    (format === "0" || format === "00" || format === "000") &&
-    Number.isFinite(numeric)
-  ) {
-    const integer = Math.round(numeric);
-    const sign = integer < 0 ? "-" : "";
-    return JSON.stringify(
-      `${sign}${String(Math.abs(integer)).padStart(format.length, "0")}`,
-    );
-  }
-  const timeMatch = /^(m:)?(ss|s)\.(ff|fff)$/.exec(format);
-  if (timeMatch && Number.isFinite(numeric)) {
-    const milliseconds =
-      MILLISECOND_CALCULATED_FIELDS.has(field) ||
-      field.endsWith("Ms") ||
-      field === "predictedLapTimeByBest" ||
-      field === "predictedLapTimeBySession";
-    const secondsValue = milliseconds ? numeric / 1000 : numeric;
-    const digits = timeMatch[3].length;
-    const scale = 10 ** digits;
-    let wholeSeconds = Math.floor(Math.abs(secondsValue));
-    let fraction = Math.round((Math.abs(secondsValue) - wholeSeconds) * scale);
-    if (fraction >= scale) {
-      wholeSeconds += 1;
-      fraction = 0;
-    }
-    const sign = secondsValue < 0 ? "-" : "";
-    const fractionText = String(fraction).padStart(digits, "0");
-    if (timeMatch[1]) {
-      const minutes = Math.floor(wholeSeconds / 60);
-      const seconds = String(wholeSeconds % 60).padStart(2, "0");
-      return JSON.stringify(`${sign}${minutes}:${seconds}.${fractionText}`);
-    }
-    const seconds =
-      timeMatch[2] === "ss"
-        ? String(wholeSeconds % 60).padStart(2, "0")
-        : String(wholeSeconds % 60);
-    return JSON.stringify(`${sign}${seconds}.${fractionText}`);
-  }
+  // 小数精度格式 (如 "0.0", "0.00") — 仅文本表达式支持
   if (/^0\.(0+)$/.test(format) && Number.isFinite(numeric))
     return JSON.stringify(numeric.toFixed(format.length - 2));
+  // 其余格式统一委托给 formatTelemetryValue（枚举、零补位、时间格式）
   return JSON.stringify(formatTelemetryValue(value, format));
 }
 
