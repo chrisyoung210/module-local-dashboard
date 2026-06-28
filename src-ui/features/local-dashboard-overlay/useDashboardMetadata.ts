@@ -121,8 +121,8 @@ export function useDashboardMetadata() {
       for (const { layout } of resolvedLayouts) {
         for (const control of layout.controls) {
           if (control.widgetType !== "map") continue;
-          const tid = control.trackId;
-          if (tid && !seen.has(tid)) {
+          const tid = control.trackId || "monza";
+          if (!seen.has(tid)) {
             seen.add(tid);
             loadTrackMap(tid);
           }
@@ -135,7 +135,7 @@ export function useDashboardMetadata() {
   const lastPrefetchedRef = useRef<string>("");
   useEffect(() => {
     const key = activeLayouts
-      .flatMap((al) => al.layout.controls.filter((c) => c.widgetType === "map").map((c) => c.trackId ?? ""))
+      .flatMap((al) => al.layout.controls.filter((c) => c.widgetType === "map").map((c) => c.trackId ?? "monza"))
       .sort()
       .join(",");
     if (key !== lastPrefetchedRef.current) {

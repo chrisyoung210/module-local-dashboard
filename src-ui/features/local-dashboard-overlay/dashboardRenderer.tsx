@@ -531,7 +531,7 @@ function MapWidget({ control, frame, trackPoints }: MapWidgetProps) {
   const { width, height, trackId } = control;
   const dotColor = control.dotColor ?? "#ff0";
   const dotSize = control.dotSize ?? 6;
-  const effectiveTrackId = trackId || "";
+  const effectiveTrackId = trackId || "monza";
   const trackData = effectiveTrackId ? trackPoints[effectiveTrackId] : undefined;
   const points = trackData?.points;
   const angleDeg = trackData?.angleDeg ?? 0;

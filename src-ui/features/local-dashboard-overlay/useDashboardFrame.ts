@@ -11,6 +11,7 @@ export function useDashboardFrame(frameMs: number = 33) {
   const [fullFrame, setFullFrame] = useState<DashboardValuesFrame | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const historyRef = useRef<Map<string, BufferEntry[]>>(new Map());
+  const fullFrameRef = useRef<Record<string, number>>({});
   const fieldCapacitiesRef = useRef<Map<string, number>>(new Map());
   const lastControlsRef = useRef<DashboardControl[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -56,10 +57,11 @@ export function useDashboardFrame(frameMs: number = 33) {
   }, []);
 
   const pushFrame = useCallback((frame: DashboardValuesFrame) => {
+    fullFrameRef.current = { ...fullFrameRef.current, ...frame.values };
     setFullFrame({
       sampleTick: frame.sampleTick,
       timestampNs: frame.timestampNs,
-      values: { ...frame.values },
+      values: { ...fullFrameRef.current },
     });
 
     const tsMs = Math.floor(frame.timestampNs / 1_000_000);
@@ -80,6 +82,7 @@ export function useDashboardFrame(frameMs: number = 33) {
 
   const handleClear = useCallback(() => {
     historyRef.current.clear();
+    fullFrameRef.current = {};
     setFullFrame(null);
 
     const controls = lastControlsRef.current;
