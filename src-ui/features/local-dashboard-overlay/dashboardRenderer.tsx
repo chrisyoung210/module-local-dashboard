@@ -101,6 +101,7 @@ export function DashboardRegionRenderer({
   containerHeight,
   frame,
   historyBuffer,
+  historyVersion,
   trackPoints,
   gearState,
   layout,
@@ -110,6 +111,7 @@ export function DashboardRegionRenderer({
   containerHeight: number;
   frame: DashboardValuesFrame | null;
   historyBuffer: Map<string, BufferEntry[]>;
+  historyVersion: number;
   trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
   gearState?: GearSmootherState;
   layout: DashboardLayoutPayload;
@@ -156,6 +158,7 @@ export function DashboardRegionRenderer({
             control={control}
             frame={frame}
             historyBuffer={historyBuffer}
+            historyVersion={historyVersion}
             trackPoints={trackPoints}
             gearState={gearState}
           />
@@ -171,6 +174,7 @@ interface DynamicDashboardControlProps {
   control: DashboardControl;
   frame: DashboardValuesFrame | null;
   historyBuffer: Map<string, BufferEntry[]>;
+  historyVersion: number;
   trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
   gearState?: GearSmootherState;
 }
@@ -183,6 +187,7 @@ export const DynamicDashboardControl = memo(function DynamicDashboardControl({
   control,
   frame,
   historyBuffer,
+  historyVersion,
   trackPoints,
   gearState,
 }: DynamicDashboardControlProps) {
@@ -196,6 +201,7 @@ export const DynamicDashboardControl = memo(function DynamicDashboardControl({
         <ChartWidget
           control={control}
           historyBuffer={historyBuffer}
+          historyVersion={historyVersion}
         />
       );
     case "map":
@@ -225,7 +231,7 @@ function controlPropsAreEqual(
 
   const wt = resolveWidgetType(next.control);
   if (wt === "chart") {
-    return true;
+    return previous.historyVersion === next.historyVersion;
   }
 
   if (wt === "map") {
@@ -360,7 +366,7 @@ export function resolveControlText(
       value = smoothGear(gearState, Number(value), gearMs).committedGear;
     }
 
-    if (field === "gear" && !explicitFormat && !control.format) {
+    if (field === "gear") {
       return formatGear(Number(value));
     }
 
@@ -448,9 +454,10 @@ function matchesRule(
 interface ChartWidgetProps {
   control: DashboardControl;
   historyBuffer: Map<string, BufferEntry[]>;
+  historyVersion: number;
 }
 
-function ChartWidget({ control, historyBuffer }: ChartWidgetProps) {
+function ChartWidget({ control, historyBuffer, historyVersion }: ChartWidgetProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fields = control.chartFields ?? [];
   const N = (control as any).chartSampleCount ?? control.chartSampleCount ?? 600;
@@ -474,15 +481,9 @@ function ChartWidget({ control, historyBuffer }: ChartWidgetProps) {
     for (const field of fields) {
       const key = (field as any).telemetryField ?? "";
       const entries = historyBuffer.get(key);
-      console.log(
-        `[ChartWidget] id="${control.id}" key="${key}" entries=${entries?.length ?? 0} color=${field.color} defaultValue=${field.defaultValue}`,
-      );
       if (!entries || entries.length === 0) continue;
 
       const points = entries.slice(-N);
-      console.log(
-        `[ChartWidget] id="${control.id}" field="${field.telemetryField}" points=${points.length} firstV=${points[0]?.v} lastV=${points[points.length - 1]?.v}`,
-      );
 
       if (points.length < 2) continue;
 
@@ -499,7 +500,7 @@ function ChartWidget({ control, historyBuffer }: ChartWidgetProps) {
       }
       ctx.stroke();
     }
-  }, [control, historyBuffer, width, height, fields, N]);
+  }, [control, historyBuffer, historyVersion, width, height, fields, N]);
 
   return (
     <canvas
@@ -539,10 +540,6 @@ function MapWidget({ control, frame, trackPoints }: MapWidgetProps) {
     frame ? frame.values["carX"] : undefined;
   const carZ =
     frame ? frame.values["carZ"] : undefined;
-
-  console.log(
-    `[MapWidget] id="${control.id}" trackId="${control.trackId ?? "(none)"}" frame=${frame ? "yes" : "null"} frameKeys=[${frame ? Object.keys(frame.values).slice(0, 10).join(", ") : ""}] carX=${carX} carZ=${carZ} points=${points?.length ?? 0}`,
-  );
 
   useEffect(() => {
     const canvas = canvasRef.current;

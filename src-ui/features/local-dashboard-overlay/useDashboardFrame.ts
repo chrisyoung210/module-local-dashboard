@@ -9,6 +9,7 @@ interface BufferEntry {
 
 export function useDashboardFrame() {
   const [fullFrame, setFullFrame] = useState<DashboardValuesFrame | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const historyRef = useRef<Map<string, BufferEntry[]>>(new Map());
   const fullFrameRef = useRef<Record<string, number>>({});
   const rafRef = useRef<number>(0);
@@ -76,6 +77,7 @@ export function useDashboardFrame() {
         entries.shift();
       }
     }
+    setHistoryVersion((v) => v + 1);
   }, []);
 
   const handleClear = useCallback(() => {
@@ -89,8 +91,6 @@ export function useDashboardFrame() {
     }
   }, [rebuildBuffers]);
 
-  const pollLogRef = useRef({ firstFrame: true, lastLogTime: 0 });
-
   useEffect(() => {
     let running = true;
 
@@ -99,12 +99,6 @@ export function useDashboardFrame() {
       try {
         const frame = await invoke<DashboardValuesFrame | null>("poll_dashboard_frame");
         if (frame) {
-          const now = Date.now();
-          if (pollLogRef.current.firstFrame || now - pollLogRef.current.lastLogTime >= 2000) {
-            console.log("[DEBUG poll] received frame, sampleTick=", frame.sampleTick, "values keys:", Object.keys(frame.values));
-            pollLogRef.current.lastLogTime = now;
-            pollLogRef.current.firstFrame = false;
-          }
           pushFrame(frame);
         } else {
           handleClear();
@@ -128,6 +122,7 @@ export function useDashboardFrame() {
   return {
     fullFrame,
     historyBuffer: historyRef.current,
+    historyVersion,
     rebuildBuffers,
   };
 }

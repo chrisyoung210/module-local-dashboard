@@ -4,6 +4,7 @@ type ExpressionValue = string | number | boolean | null | undefined;
 
 type Token =
   | { type: "value"; value: ExpressionValue }
+  | { type: "identifier"; value: string }
   | { type: "operator"; value: string }
   | { type: "paren"; value: "(" | ")" }
   | { type: "question" }
@@ -27,6 +28,25 @@ const OPERATORS = [
   "<",
   "!",
 ];
+
+const BUILTIN_FUNCTIONS: Record<
+  string,
+  (args: ExpressionValue[]) => ExpressionValue
+> = {
+  abs: (args) => {
+    if (args.length !== 1) throw new Error("Invalid arguments for abs");
+    return Math.abs(Number(args[0]));
+  },
+  round: (args) => {
+    if (args.length !== 2) throw new Error("Invalid arguments for round");
+    const x = Number(args[0]);
+    const n = Math.floor(Number(args[1]));
+    if (!Number.isFinite(n) || n < 0)
+      throw new Error("Invalid arguments for round: n must be >= 0");
+    if (!Number.isFinite(x)) return x;
+    return Number(x.toFixed(n));
+  },
+};
 
 function tokenize(expression: string): Token[] {
   const tokens: Token[] = [];
@@ -90,11 +110,16 @@ function tokenize(expression: string): Token[] {
       else if (identifier === "NaN") tokens.push({ type: "value", value: NaN });
       else if (identifier === "Infinity")
         tokens.push({ type: "value", value: Infinity });
-      else throw new Error(`Unknown identifier: ${identifier}`);
+      else tokens.push({ type: "identifier", value: identifier });
       continue;
     }
     if (ch === "(" || ch === ")") {
       tokens.push({ type: "paren", value: ch });
+      index += 1;
+      continue;
+    }
+    if (ch === ",") {
+      tokens.push({ type: "operator", value: "," });
       index += 1;
       continue;
     }
@@ -224,6 +249,29 @@ class Parser {
     if (this.operator("+")) return number(this.unary());
     const token = this.take();
     if (token?.type === "value") return token.value;
+    if (token?.type === "identifier") {
+      const next = this.peek();
+      if (next?.type === "paren" && next.value === "(") {
+        this.take();
+        const args: ExpressionValue[] = [];
+        const afterOpen = this.peek();
+        if (afterOpen?.type === "paren" && afterOpen.value === ")") {
+          this.take();
+        } else {
+          while (true) {
+            args.push(this.conditional());
+            const sep = this.take();
+            if (sep?.type === "paren" && sep.value === ")") break;
+            if (sep?.type !== "operator" || sep.value !== ",")
+              throw new Error("Expected ',' or ')' in function arguments");
+          }
+        }
+        const fn = BUILTIN_FUNCTIONS[token.value];
+        if (!fn) throw new Error(`Unknown function: ${token.value}`);
+        return fn(args);
+      }
+      throw new Error(`Unknown telemetry field: ${token.value}`);
+    }
     if (token?.type === "paren" && token.value === "(") {
       const value = this.conditional();
       const close = this.take();

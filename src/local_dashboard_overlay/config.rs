@@ -114,7 +114,7 @@ impl LocalDashboardOverlayConfig {
 
     pub fn normalized(mut self) -> Self {
         self.polling.status_ms = self.polling.status_ms.clamp(250, 5000);
-        self.polling.frame_ms = self.polling.frame_ms.clamp(33, 1000);
+        self.polling.frame_ms = self.polling.frame_ms.clamp(4, 1000);
         self.polling.window_ms = self.polling.window_ms.clamp(250, 5000);
 
         let timestamp = current_time_millis();

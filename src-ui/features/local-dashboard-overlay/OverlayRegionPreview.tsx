@@ -61,6 +61,7 @@ export function OverlayRegionPreview({
                 containerHeight={height}
                 frame={previewFrame}
                 historyBuffer={emptyHistoryBuffer}
+                historyVersion={0}
                 trackPoints={emptyTrackPoints}
                 layout={layout}
                 region={region}

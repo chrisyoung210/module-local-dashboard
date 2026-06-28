@@ -6,5 +6,5 @@ pub use local_dashboard_overlay::{
         LocalDashboardOverlayConfig, OverlayAnchor, OverlayPollingConfig, OverlayRegionConfig,
         OVERLAY_CONFIG_SCHEMA, OVERLAY_CONFIG_VERSION,
     },
-    frame_bus::{debug_log, DashboardFrameBus},
+    frame_bus::DashboardFrameBus,
 };
