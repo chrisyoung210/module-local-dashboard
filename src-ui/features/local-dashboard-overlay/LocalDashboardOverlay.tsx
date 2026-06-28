@@ -21,8 +21,8 @@ export function LocalDashboardOverlay({
   showClosePreview,
   onClosePreview,
 }: LocalDashboardOverlayProps) {
-  const { activeLayouts, trackPointsCache } = useDashboardMetadata();
-  const { fullFrame, historyBuffer, historyVersion, rebuildBuffers } = useDashboardFrame();
+  const { config, activeLayouts, trackPointsCache } = useDashboardMetadata();
+  const { fullFrame, historyBuffer, historyVersion, rebuildBuffers } = useDashboardFrame(config?.polling.frameMs ?? 33);
   const gearStateRef = useRef(createInitialGearSmootherState());
 
   const gearState = useMemo(() => {

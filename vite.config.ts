@@ -1,12 +1,12 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { resolve } from "path";
 
 export default defineConfig({
   resolve: {
     alias: {
-      "module_dashboard_protocol/types": resolve(
+      "module_dashboard_protocol": resolve(
         __dirname,
-        "../module_dashboard_protocol/types/index.ts"
+        "../module_dashboard_protocol"
       ),
     },
   },

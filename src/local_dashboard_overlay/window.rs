@@ -3,6 +3,8 @@ use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBu
 
 pub const OVERLAY_WINDOW_LABEL: &str = "local-dashboard-overlay";
 const OVERLAY_WINDOW_URL: &str = "/?window=local-dashboard-overlay";
+const DEFAULT_OVERLAY_WIDTH: f64 = 1280.0;
+const DEFAULT_OVERLAY_HEIGHT: f64 = 720.0;
 
 pub fn ensure_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) {
@@ -24,7 +26,7 @@ pub fn ensure_overlay_window(app: &tauri::AppHandle) -> Result<(), String> {
     .resizable(false)
     .shadow(false)
     .focused(false)
-    .inner_size(1280.0, 720.0)
+    .inner_size(DEFAULT_OVERLAY_WIDTH, DEFAULT_OVERLAY_HEIGHT)
     .build()
     .map_err(|error| format!("Failed to create overlay window: {error}"))?;
 

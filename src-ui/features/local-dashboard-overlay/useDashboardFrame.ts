@@ -7,30 +7,29 @@ interface BufferEntry {
   v: number;
 }
 
-export function useDashboardFrame() {
+export function useDashboardFrame(frameMs: number = 33) {
   const [fullFrame, setFullFrame] = useState<DashboardValuesFrame | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const historyRef = useRef<Map<string, BufferEntry[]>>(new Map());
-  const fullFrameRef = useRef<Record<string, number>>({});
-  const rafRef = useRef<number>(0);
   const fieldCapacitiesRef = useRef<Map<string, number>>(new Map());
   const lastControlsRef = useRef<DashboardControl[]>([]);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const rebuildBuffers = useCallback((chartControls: DashboardControl[]) => {
     const nextCapacities = new Map<string, number>();
     const nextDefaults = new Map<string, number>();
 
     for (const control of chartControls) {
-      const N = (control as any).chartSampleCount ?? control.chartSampleCount ?? 600;
+      const N = control.chartSampleCount ?? 600;
       for (const field of control.chartFields ?? []) {
-        const key = (field as any).telemetryField ?? "";
+        const key = field.telemetryField;
         if (!key) continue;
         const prev = nextCapacities.get(key) ?? 0;
         if (N > prev) {
           nextCapacities.set(key, N);
         }
         if (!nextDefaults.has(key)) {
-          nextDefaults.set(key, (field as any).defaultValue ?? field.defaultValue ?? 0);
+          nextDefaults.set(key, field.defaultValue ?? 0);
         }
       }
     }
@@ -57,11 +56,10 @@ export function useDashboardFrame() {
   }, []);
 
   const pushFrame = useCallback((frame: DashboardValuesFrame) => {
-    fullFrameRef.current = { ...fullFrameRef.current, ...frame.values };
     setFullFrame({
       sampleTick: frame.sampleTick,
       timestampNs: frame.timestampNs,
-      values: { ...fullFrameRef.current },
+      values: { ...frame.values },
     });
 
     const tsMs = Math.floor(frame.timestampNs / 1_000_000);
@@ -82,7 +80,6 @@ export function useDashboardFrame() {
 
   const handleClear = useCallback(() => {
     historyRef.current.clear();
-    fullFrameRef.current = {};
     setFullFrame(null);
 
     const controls = lastControlsRef.current;
@@ -92,10 +89,11 @@ export function useDashboardFrame() {
   }, [rebuildBuffers]);
 
   useEffect(() => {
-    let running = true;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
 
     const poll = async () => {
-      if (!running) return;
       try {
         const frame = await invoke<DashboardValuesFrame | null>("poll_dashboard_frame");
         if (frame) {
@@ -106,18 +104,18 @@ export function useDashboardFrame() {
       } catch {
         // acc-coach may not have registered poll_dashboard_frame yet
       }
-      if (running) {
-        rafRef.current = requestAnimationFrame(poll);
-      }
     };
 
     poll();
+    intervalRef.current = setInterval(poll, frameMs);
 
     return () => {
-      running = false;
-      cancelAnimationFrame(rafRef.current);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
-  }, [pushFrame, handleClear]);
+  }, [pushFrame, handleClear, frameMs]);
 
   return {
     fullFrame,

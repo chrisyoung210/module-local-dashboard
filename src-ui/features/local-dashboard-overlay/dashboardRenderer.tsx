@@ -459,8 +459,6 @@ interface ChartWidgetProps {
 
 function ChartWidget({ control, historyBuffer, historyVersion }: ChartWidgetProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fields = control.chartFields ?? [];
-  const N = (control as any).chartSampleCount ?? control.chartSampleCount ?? 600;
   const { width, height } = control;
 
   useEffect(() => {
@@ -468,6 +466,9 @@ function ChartWidget({ control, historyBuffer, historyVersion }: ChartWidgetProp
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    const fields = control.chartFields ?? [];
+    const N = control.chartSampleCount ?? 600;
 
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
@@ -479,7 +480,7 @@ function ChartWidget({ control, historyBuffer, historyVersion }: ChartWidgetProp
     if (fields.length === 0) return;
 
     for (const field of fields) {
-      const key = (field as any).telemetryField ?? "";
+      const key = field.telemetryField;
       const entries = historyBuffer.get(key);
       if (!entries || entries.length === 0) continue;
 
@@ -500,7 +501,7 @@ function ChartWidget({ control, historyBuffer, historyVersion }: ChartWidgetProp
       }
       ctx.stroke();
     }
-  }, [control, historyBuffer, historyVersion, width, height, fields, N]);
+  }, [control, historyBuffer, historyVersion, width, height]);
 
   return (
     <canvas
@@ -530,7 +531,7 @@ function MapWidget({ control, frame, trackPoints }: MapWidgetProps) {
   const { width, height, trackId } = control;
   const dotColor = control.dotColor ?? "#ff0";
   const dotSize = control.dotSize ?? 6;
-  const effectiveTrackId = trackId || "monza";
+  const effectiveTrackId = trackId || "";
   const trackData = effectiveTrackId ? trackPoints[effectiveTrackId] : undefined;
   const points = trackData?.points;
   const angleDeg = trackData?.angleDeg ?? 0;

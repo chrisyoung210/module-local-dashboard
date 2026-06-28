@@ -26,7 +26,9 @@ interface WireRegisteredDashboardLayout {
   layout: DashboardLayoutPayload;
 }
 
-const TRACK_POINTS_CACHE: Record<string, TrackPointsData> = {};
+// Module-level cache shared across all hook instances.
+// In multi-window scenarios, all instances share the same cache.
+// Tests should avoid relying on pre-populated cache state.
 
 export function useDashboardMetadata() {
   const [config, setConfig] = useState<LocalDashboardOverlayConfig | null>(null);
@@ -82,9 +84,12 @@ export function useDashboardMetadata() {
     return () => window.removeEventListener("focus", onFocus);
   }, [config, resolveActiveLayouts]);
 
+  const trackPointsCacheRef = useRef<Record<string, TrackPointsData>>({});
+
   const loadTrackMap = useCallback(async (trackId: string) => {
-    if (TRACK_POINTS_CACHE[trackId]) {
-      setTrackPointsCache({ ...TRACK_POINTS_CACHE });
+    const cache = trackPointsCacheRef.current;
+    if (cache[trackId]) {
+      setTrackPointsCache({ ...cache });
       return;
     }
     try {
@@ -102,8 +107,8 @@ export function useDashboardMetadata() {
           flipX: record.flipX ?? 1,
           flipZ: record.flipZ ?? 1,
         };
-        TRACK_POINTS_CACHE[trackId] = data;
-        setTrackPointsCache({ ...TRACK_POINTS_CACHE });
+        trackPointsCacheRef.current[trackId] = data;
+        setTrackPointsCache({ ...trackPointsCacheRef.current });
       }
     } catch {
       // track map may not be available
@@ -115,8 +120,9 @@ export function useDashboardMetadata() {
       const seen = new Set<string>();
       for (const { layout } of resolvedLayouts) {
         for (const control of layout.controls) {
-          const tid = control.trackId || "monza";
-          if (!seen.has(tid)) {
+          if (control.widgetType !== "map") continue;
+          const tid = control.trackId;
+          if (tid && !seen.has(tid)) {
             seen.add(tid);
             loadTrackMap(tid);
           }
@@ -129,7 +135,7 @@ export function useDashboardMetadata() {
   const lastPrefetchedRef = useRef<string>("");
   useEffect(() => {
     const key = activeLayouts
-      .flatMap((al) => al.layout.controls.map((c) => c.trackId ?? ""))
+      .flatMap((al) => al.layout.controls.filter((c) => c.widgetType === "map").map((c) => c.trackId ?? ""))
       .sort()
       .join(",");
     if (key !== lastPrefetchedRef.current) {

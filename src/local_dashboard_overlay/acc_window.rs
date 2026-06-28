@@ -15,8 +15,14 @@ pub struct AccWindowBounds {
 #[serde(rename_all = "camelCase")]
 pub enum AccWindowMatchedBy {
     Title,
+    /// Fallback bounds constructed by the caller (acc-coach frontend).
+    /// `find_acc_window_bounds` never returns this variant.
     Fallback,
 }
+
+const MIN_ACC_WINDOW_WIDTH: i32 = 800;
+const MIN_ACC_WINDOW_HEIGHT: i32 = 450;
+const MAX_TITLE_LENGTH: i32 = 1024;
 
 #[cfg(windows)]
 pub fn find_acc_window_bounds() -> Result<Option<AccWindowBounds>, String> {
@@ -27,6 +33,10 @@ pub fn find_acc_window_bounds() -> Result<Option<AccWindowBounds>, String> {
         },
     };
 
+    // SAFETY: The enum_window callback receives `lparam` as a raw pointer to
+    // a stack-local `Option<AccWindowBounds>`. The pointer is valid for the
+    // entire synchronous EnumWindows call. The callback only writes through
+    // the pointer once, and GetWindowTextW receives a bounded buffer.
     unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let found = &mut *(lparam as *mut Option<AccWindowBounds>);
         if found.is_some() || IsWindowVisible(hwnd) == 0 {
@@ -34,7 +44,7 @@ pub fn find_acc_window_bounds() -> Result<Option<AccWindowBounds>, String> {
         }
 
         let title_len = GetWindowTextLengthW(hwnd);
-        if title_len <= 0 {
+        if title_len <= 0 || title_len > MAX_TITLE_LENGTH {
             return 1;
         }
 
@@ -67,9 +77,9 @@ pub fn find_acc_window_bounds() -> Result<Option<AccWindowBounds>, String> {
             return 1;
         }
 
-        let width = rect.right - rect.left;
-        let height = rect.bottom - rect.top;
-        if width < 800 || height < 450 {
+        let width = rect.right.saturating_sub(rect.left);
+        let height = rect.bottom.saturating_sub(rect.top);
+        if width < MIN_ACC_WINDOW_WIDTH || height < MIN_ACC_WINDOW_HEIGHT {
             return 1;
         }
 
@@ -85,6 +95,9 @@ pub fn find_acc_window_bounds() -> Result<Option<AccWindowBounds>, String> {
     }
 
     let mut found: Option<AccWindowBounds> = None;
+    // SAFETY: `found` is a stack-local variable that lives for the duration
+    // of the synchronous EnumWindows call. The callback only writes through
+    // the pointer while EnumWindows is running.
     let lparam = &mut found as *mut Option<AccWindowBounds> as LPARAM;
     let ok = unsafe { EnumWindows(Some(enum_window), lparam) };
     if ok == 0 && found.is_none() {
