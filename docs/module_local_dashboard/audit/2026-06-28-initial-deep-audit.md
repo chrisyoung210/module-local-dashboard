@@ -1,7 +1,7 @@
 # module_local_dashboard 首次深度审计
 
 - 状态：**Closed** ✅
-- 修复提交：`cdfe1ad`（master）
+- 修复提交：`cdfe1ad`（第一/二轮修复）→ `a5b2364`（撤销误判 H2/M4，第三轮）
 - 审计日期：2026-06-28
 - 审计类型：首次深度审计（Full Deep Audit）
 - 审计范围：`module_local_dashboard` 仓库全部代码（Rust 后端 + TypeScript 前端 + 配置 + 与 acc-coch 集成一致性）
@@ -31,14 +31,16 @@
 | 严重度 | 数量 |
 |---|---|
 | Critical | 1 |
-| High | 3 |
-| Medium | 4 |
+| High | 2 |
+| Medium | 3 |
 | Low | 7 |
-| **合计** | **15** |
+| **合计** | **13** |
 
 > 已删除的文档相关问题（原 C1、C2、M2、M3、M7、H5）不再计入。这些问题曾以"代码与文档不符"定性，文档删除后"不符"失去依据，代码本身的行为视为当前正确架构。
 >
 > 原 H1（`frame_ms` clamp 下限 4ms 过低）经用户确认 4ms 为设计决策，不计为问题。`config.rs:117` 的 `clamp(4, 1000)` 表示帧间隔最小 4ms（最高 250Hz）、最大 1000ms（最低 1Hz），此范围正确。
+>
+> **原 H2 和 M4 经修复后验证为误判，已撤销修复（详见第 14 节）。** 实际有效问题数从 15 降为 13。
 
 ---
 
@@ -154,30 +156,18 @@ rafRef.current = requestAnimationFrame(poll);  // ~16ms @ 60Hz
 
 ---
 
-### H2: `useDashboardFrame.ts` 的 `fullFrameRef` 永久累积所有历史字段
+### ~~H2: `useDashboardFrame.ts` 的 `fullFrameRef` 永久累积所有历史字段~~ [误判 — 已撤销]
+
+> **⚠️ 本条为误判，已于第 14 节撤销修复。** `poll_dashboard_frame` 返回的是稀疏帧（每帧只含变化的字段），`fullFrameRef` 累积是**必要语义**——不做累积会导致未出现在当前帧的字段变 `undefined`，text widget 闪烁显示 `--`/`NaN`。保留原文供追溯。
 
 **位置**：`src-ui/features/local-dashboard-overlay/useDashboardFrame.ts:60`
 
-**代码**：
-```ts
-fullFrameRef.current = { ...fullFrameRef.current, ...frame.values };
-setFullFrame({
-  sampleTick: frame.sampleTick,
-  timestampNs: frame.timestampNs,
-  values: { ...fullFrameRef.current },  // 包含所有曾经出现过的字段
-});
-```
-
-**问题**：
+**原文（误判）**：
 - `fullFrameRef.current` 是一个累积的 map，每帧只覆盖当前帧存在的字段，**不删除已消失的字段**。
 - 如果某个遥测字段（如 `trackName`）在某帧出现，后续帧不再包含它，它的旧值仍会保留在 `fullFrameRef.current` 中并被渲染。
-- `handleClear`（第 83-92 行）会重置 `fullFrameRef`，但只在 `poll_dashboard_frame` 返回 `null` 时触发。
+- `handleClear` 会在 `poll_dashboard_frame` 返回 `null` 时重置 `fullFrameRef`。
 
-**影响**：
-- 可能显示过时/错误的遥测值（例如切换赛道后仍显示旧赛道名）。
-- 字段数量上限未定义，理论上无界增长（实际 ACC 遥测字段有限，影响可控）。
-
-**建议**：每帧直接使用 `frame.values`，不做累积合并；或明确文档化"帧值是累积的"语义并让渲染层感知字段新鲜度。
+**实际正确行为**：acc-coch 的 `poll_dashboard_frame` 返回稀疏帧（仅含本帧变化的字段）。累积合并是让 text widget 在字段未变化时保持上一次有效值的必要机制。撤销修复后代码恢复为 `{ ...fullFrameRef.current, ...frame.values }`。
 
 ---
 
@@ -222,15 +212,17 @@ pub enum AccWindowMatchedBy {
 
 ---
 
-### M4: 硬编码 track ID fallback `"monza"`
+### ~~M4: 硬编码 track ID fallback `"monza"`~~ [误判 — 已撤销]
+
+> **⚠️ 本条为误判，已于第 14 节撤销修复。** `"monza"` 是整个项目（acc-coch 设计器 `DashboardDesignerView.tsx:1551`、`LocalDashboardView.tsx:170`）统一的 `trackId` 为 null 时的 fallback。map widget 在设计器里创建时 `trackId` 默认就是 `null`。审计时只看子模块内部未查 acc-coch 约定，误判为硬编码错误。保留原文供追溯。
 
 **位置**：
 - `dashboardRenderer.tsx:533` — `const effectiveTrackId = trackId || "monza";`
 - `useDashboardMetadata.ts:118` — `const tid = control.trackId || "monza";`
 
-**问题**：当 `trackId` 为空时，默认使用 "monza" 赛道数据。如果 acc-coch 的 track map 数据集中没有 "monza"，会静默失败（`trackPoints["monza"]` 为 `undefined`，MapWidget 显示 "No track data"）。
+**原文（误判）**：当 `trackId` 为空时，默认使用 "monza" 赛道数据。如果 acc-coch 的 track map 数据集中没有 "monza"，会静默失败。
 
-**建议**：fallback 应为空字符串或 `null`，让 MapWidget 显示"No track data"而非尝试加载一个可能不存在的赛道。或从配置中读取默认 trackId。
+**实际正确行为**：acc-coch 的 `DashboardDesignerView.tsx:1550-1551` 和 `LocalDashboardView.tsx:170` 都用 `control.trackId || "monza"` 做 fallback。map widget 创建时 `trackId` 默认 `null`（`DashboardDesignerView.tsx:204`，有测试 `DashboardDesignerView.test.tsx:173` 确认）。`"monza"` 是项目级约定，子模块应保持一致。撤销修复后三处 fallback 均恢复为 `|| "monza"`。
 
 ---
 
@@ -537,10 +529,10 @@ LSP 不再报告 `vite.config.ts` 类型错误。
 |---|---|---|
 | **C3** `overlayConfigApi.ts` 死代码 | ✅ 已修复 | 文件已删除；`index.ts` 不再导出；grep 确认子模块内无 `overlayConfigApi` 残留引用；acc-coch 的 4 处 `@local-dashboard-overlay` 导入不依赖该文件 |
 | **H1** `useDashboardFrame` 忽略 `frameMs` | ✅ 已修复 | `useDashboardFrame.ts:10` 改为接收 `frameMs: number = 33` 参数；`useDashboardFrame.ts:110` 改为 `setInterval(poll, frameMs)`；`LocalDashboardOverlay.tsx:25` 从 `config?.polling.frameMs ?? 33` 传入 |
-| **H2** `fullFrameRef` 永久累积字段 | ✅ 已修复 | `useDashboardFrame.ts:62` 改为 `values: { ...frame.values }`；`fullFrameRef` 已完全移除；`handleClear` 中对应的 `fullFrameRef.current = {}` 也已移除 |
+| **H2** `fullFrameRef` 永久累积字段 | ❌ 误判 — 已撤销 | 第一轮"修复"移除了 `fullFrameRef` 累积，导致稀疏帧下未变化字段变 `undefined`，text widget 闪烁显示 `--`/`NaN`（Bug 2）。第 14 节撤销修复，恢复累积逻辑 |
 | **H3** `AccWindowMatchedBy::Fallback` 缺注释 | ✅ 已修复 | `acc_window.rs:18-19` 添加 doc comment：「Fallback bounds constructed by the caller (acc-coach frontend). `find_acc_window_bounds` never returns this variant.」 |
 | **M1** 5 处 `as any` 类型逃逸 | ✅ 已修复 | grep 确认 `as any` 为 0；改为直接 `control.chartSampleCount`、`field.telemetryField`、`field.defaultValue` |
-| **M4** 硬编码 `"monza"` fallback | ✅ 已修复 | `dashboardRenderer.tsx:533` 改为 `trackId \|\| ""`；`useDashboardMetadata.ts:124` 改为 `control.trackId`（空值不预取）；grep `"monza"` 为 0 |
+| **M4** 硬编码 `"monza"` fallback | ❌ 误判 — 已撤销 | 第一轮"修复"删除了 `"monza"` fallback，导致 map widget 在 `trackId` 为 null 时不加载 track map、赛道和赛车位置都不渲染（Bug 1）。`"monza"` 是 acc-coch 项目级约定（`DashboardDesignerView.tsx:1551`、`LocalDashboardView.tsx:170`）。第 14 节撤销修复，恢复三处 `\|\| "monza"` |
 | **M5** 模块级单例 `TRACK_POINTS_CACHE` | ✅ 已修复 | `useDashboardMetadata.ts:87` 改为 `trackPointsCacheRef = useRef<Record<string, TrackPointsData>>({})`；grep `TRACK_POINTS_CACHE` 为 0 |
 | **M6** 未使用的 `windows-sys` features | ✅ 已修复 | `Cargo.toml` 移除 `Win32_System_Memory` 和 `Win32_Graphics_Gdi` |
 | **L1** unsafe 缺 SAFETY 注释和边界检查 | ✅ 已修复 | `acc_window.rs:36-39,98-100` 添加两处 `// SAFETY:` 注释；`MAX_TITLE_LENGTH=1024` 上限检查（第 47 行）；`saturating_sub` 防溢出（第 80-81 行）；`MIN_ACC_WINDOW_WIDTH/HEIGHT` 常量化（第 23-24 行） |
@@ -555,10 +547,11 @@ LSP 不再报告 `vite.config.ts` 类型错误。
 
 | 状态 | 数量 |
 |---|---|
-| ✅ 完全修复 | 13 |
-| ⚠️ 占位修复 | 1（L3） |
+| ✅ 完全修复 | 11 |
+| ⚠️ 占位修复 | 1（L3，第二轮已真正修复） |
 | ❌ 未修复 | 1（L4，改进建议） |
-| **合计** | **15** |
+| ❌ 误判 — 已撤销 | 2（H2、M4，详见第 14 节） |
+| **合计** | **15**（有效问题 13） |
 
 ### 12.4 修复中引入的新问题
 
@@ -615,9 +608,9 @@ $ cargo test          → ✅ 7 passed
 | **N1** `dashboardRenderer.tsx:463` 缩进错位 | ✅ 已修复 | `fields` 和 `N` 两行移入 `useEffect` 内部（第 470-471 行），缩进与上下文一致；原第 463 行的多余空格已消除 |
 | **L3** lint 脚本（占位 → 真正 ESLint） | ✅ 已修复 | 新增 `eslint.config.js`（flat config，含 `@typescript-eslint/recommended` + `eslint-plugin-react-hooks`）；`package.json` 的 `lint` 脚本改为 `"eslint src-ui/"`；devDependencies 添加 `eslint`、`@typescript-eslint/eslint-plugin`、`@typescript-eslint/parser`、`eslint-plugin-react-hooks`；`npm run lint` 实际运行 0 error 0 warning |
 
-### 13.3 最终状态
+### 13.3 最终状态（第二轮，后被第 14 节推翻）
 
-所有审计问题已完全修复。剩余仅 **L4（测试覆盖不足）** 为非阻塞改进建议，不视为待处理缺陷。
+> ⚠️ 本节的"全部修复"结论已被第 14 节推翻：H2 和 M4 经修复后验证为误判，已撤销修复。
 
 | 状态 | 数量 |
 |---|---|
@@ -639,6 +632,83 @@ $ cargo test          → ✅ 7 passed
 - ✅ `no-explicit-any` 设为 warn（不阻塞但会提示）
 - ⚠️ 关闭了 `react-hooks/refs` 和 `react-hooks/set-state-in-effect` 两条规则——可接受，但建议在代码稳定后重新评估是否开启
 
-### 13.5 结论
+### 13.5 结论（第二轮，后被第 14 节推翻）
 
-第二轮修复后，本审计报告所列 15 个问题已全部完全修复，四项构建/测试/lint 命令均通过。审计闭环。
+> ⚠️ 本节结论已被第 14 节推翻。
+
+~~第二轮修复后，本审计报告所列 15 个问题已全部完全修复，四项构建/测试/lint 命令均通过。审计闭环。~~
+
+---
+
+## 14. 第三轮：误判撤销与 Bug 修复（2026-06-28）
+
+第二轮修复后，开发人员报告出现两个 Bug。经调查，**两个 Bug 均由第一/二轮的误判修复引起**，现撤销相关修复。
+
+### 14.1 Bug 1: map widget 不渲染
+
+**现象**：replay 模式下，map widget 的赛道地图和赛车位置都不渲染。
+
+**根因**：M4（误判）删除了 `control.trackId || "monza"` 的 fallback。当 `control.trackId` 为 `null` 时（dashboard 设计器创建 map widget 的默认值，见 `DashboardDesignerView.tsx:204` 及测试 `DashboardDesignerView.test.tsx:173`），`prefetchTrackMaps` 跳过加载、`MapWidget` 的 `effectiveTrackId` 为空字符串，`points` 恒为 `undefined`，effect 提前 return，什么都不画。
+
+**项目约定**：`"monza"` 是 acc-coch 项目级 fallback，`DashboardDesignerView.tsx:1550-1551` 和 `LocalDashboardView.tsx:170` 都用 `control.trackId || "monza"`。审计时只看子模块内部未查 acc-coch 约定，误判为硬编码错误。
+
+**修复**：恢复三处 `"monza"` fallback：
+- `dashboardRenderer.tsx:534` — `trackId || "monza"`
+- `useDashboardMetadata.ts:124` — `control.trackId || "monza"`
+- `useDashboardMetadata.ts:138` — `c.trackId ?? "monza"`
+
+### 14.2 Bug 2: 稀疏数据导致 text widget 闪烁
+
+**现象**：overlay 中显示的数据一会是正常值，一会是 `--` 或 `NaN`。
+
+**根因**：H2（误判）移除了 `fullFrameRef` 的字段累积逻辑。`poll_dashboard_frame` 返回的是**稀疏帧**——每帧只含本帧发生变化的字段，不含未变化字段。不做累积合并时，未出现在当前帧的字段变 `undefined`，text widget 走 `--`/`NaN` 分支。字段在下一次变化时才恢复，造成闪烁。
+
+**正确语义**：`fullFrameRef.current = { ...fullFrameRef.current, ...frame.values }` 是让 text widget 在字段未变化时保持上一次有效值的必要机制。`handleClear` 仍会在 `poll_dashboard_frame` 返回 `null`（live session 结束/清空信号）时重置 `fullFrameRef`，不存在"永久残留"问题。
+
+**修复**：恢复 `useDashboardFrame.ts` 的 `fullFrameRef` 累积逻辑：
+- `pushFrame`：`fullFrameRef.current = { ...fullFrameRef.current, ...frame.values }`，`values: { ...fullFrameRef.current }`
+- `handleClear`：`fullFrameRef.current = {}`
+
+### 14.3 撤销后的构建验证
+
+```
+$ npm run typecheck   → ✅ 通过
+$ npm test            → ✅ 2 files, 41 tests passed
+$ npm run lint        → ✅ 通过（0 error, 0 warning）
+$ cargo test          → ✅ 7 passed
+```
+
+### 14.4 最终问题统计（修正后）
+
+| 严重度 | 有效数量 | 说明 |
+|---|---|---|
+| Critical | 1 | C3 |
+| High | 2 | H1、H3（H2 为误判，撤销） |
+| Medium | 3 | M1、M5、M6（M4 为误判，撤销） |
+| Low | 7 | L1-L7 |
+| **合计** | **13** | 原 15 减去 2 个误判 |
+
+### 14.5 最终修复状态
+
+| 状态 | 数量 |
+|---|---|
+| ✅ 完全修复 | 11 |
+| ✅ 真正修复（第二轮 ESLint） | 1（L3） |
+| ❌ 误判 — 已撤销 | 2（H2、M4） |
+| 💡 可选改进（非阻塞） | 1（L4） |
+| **合计** | **15**（有效问题 13，全部已修复或为改进建议） |
+
+### 14.6 误判原因复盘
+
+两条误判的共同原因：**审计时只看子模块内部代码，未验证 acc-coch 主模块的数据契约**。
+
+| 误判 | 根因 |
+|---|---|
+| H2 | 不知道 `poll_dashboard_frame` 返回稀疏帧。累积合并是应对稀疏帧的必要机制，不是 bug。 |
+| M4 | 不知道 `"monza"` 是 acc-coch 项目级 fallback 约定。设计器创建 map widget 时 `trackId` 默认 `null`，整个项目统一用 `\|\| "monza"` 兜底。 |
+
+**教训**：子模块审计必须交叉验证主模块的数据契约和约定，不能只看子模块内部代码就下结论。
+
+### 14.7 结论
+
+误判撤销后，本审计报告有效问题 13 个，全部已修复或为非阻塞改进建议。四项构建/测试/lint 命令均通过。审计闭环。
