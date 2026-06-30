@@ -78,7 +78,7 @@ impl Default for OverlayPollingConfig {
     fn default() -> Self {
         Self {
             status_ms: 500,
-            frame_ms: 33,
+            frame_ms: 16,
             window_ms: 500,
         }
     }
@@ -175,7 +175,7 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains(OVERLAY_CONFIG_SCHEMA));
         assert!(json.contains("\"version\":1"));
-        assert_eq!(config.polling.frame_ms, 33);
+        assert_eq!(config.polling.frame_ms, 16);
     }
 
     #[test]

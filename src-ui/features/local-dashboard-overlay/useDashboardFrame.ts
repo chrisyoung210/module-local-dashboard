@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { DashboardControl, DashboardValuesFrame } from "./types";
 
 interface BufferEntry {
@@ -7,7 +8,7 @@ interface BufferEntry {
   v: number;
 }
 
-export function useDashboardFrame(frameMs: number = 33) {
+export function useDashboardFrame(frameMs: number = 16) {
   const [fullFrame, setFullFrame] = useState<DashboardValuesFrame | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const historyRef = useRef<Map<string, BufferEntry[]>>(new Map());
@@ -15,6 +16,8 @@ export function useDashboardFrame(frameMs: number = 33) {
   const fieldCapacitiesRef = useRef<Map<string, number>>(new Map());
   const lastControlsRef = useRef<DashboardControl[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingFrameRef = useRef<DashboardValuesFrame | null>(null);
+  const rafScheduledRef = useRef(false);
 
   const rebuildBuffers = useCallback((chartControls: DashboardControl[]) => {
     const nextCapacities = new Map<string, number>();
@@ -91,16 +94,47 @@ export function useDashboardFrame(frameMs: number = 33) {
     }
   }, [rebuildBuffers]);
 
-  useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
+  const flushPendingFrame = useCallback(() => {
+    rafScheduledRef.current = false;
+    const frame = pendingFrameRef.current;
+    if (!frame) return;
+    pendingFrameRef.current = null;
+    pushFrame(frame);
+  }, [pushFrame]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    listen<DashboardValuesFrame>("dashboard://frame", (event) => {
+      const frame = event.payload;
+      if (frame && frame.values && Object.keys(frame.values).length > 0) {
+        pendingFrameRef.current = frame;
+        if (!rafScheduledRef.current) {
+          rafScheduledRef.current = true;
+          requestAnimationFrame(flushPendingFrame);
+        }
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    }).catch(() => {
+      // listen failed, polling fallback will handle it
+    });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [flushPendingFrame, handleClear]);
+
+  useEffect(() => {
     const poll = async () => {
       try {
         const frame = await invoke<DashboardValuesFrame | null>("poll_dashboard_frame");
         if (frame) {
-          pushFrame(frame);
+          pendingFrameRef.current = frame;
+          if (!rafScheduledRef.current) {
+            rafScheduledRef.current = true;
+            requestAnimationFrame(flushPendingFrame);
+          }
         } else {
           handleClear();
         }
@@ -109,16 +143,19 @@ export function useDashboardFrame(frameMs: number = 33) {
       }
     };
 
-    poll();
-    intervalRef.current = setInterval(poll, frameMs);
+    const timer = setTimeout(() => {
+      poll();
+      intervalRef.current = setInterval(poll, frameMs);
+    }, 200);
 
     return () => {
+      clearTimeout(timer);
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
-  }, [pushFrame, handleClear, frameMs]);
+  }, [flushPendingFrame, handleClear, frameMs]);
 
   return {
     fullFrame,
