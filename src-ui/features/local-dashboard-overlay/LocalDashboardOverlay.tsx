@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
-import { createInitialGearSmootherState, smoothGear } from "./telemetryFormat";
+import { useEffect, useMemo } from "react";
 import { DashboardRegionRenderer } from "./dashboardRenderer";
 import { useDashboardFrame } from "./useDashboardFrame";
 import { useDashboardMetadata } from "./useDashboardMetadata";
@@ -22,16 +21,7 @@ export function LocalDashboardOverlay({
   onClosePreview,
 }: LocalDashboardOverlayProps) {
   const { config, activeLayouts, trackPointsCache } = useDashboardMetadata();
-  const { fullFrame, historyBuffer, historyVersion, rebuildBuffers } = useDashboardFrame(config?.polling.frameMs ?? 33);
-  const gearStateRef = useRef(createInitialGearSmootherState());
-
-  const gearState = useMemo(() => {
-    if (!fullFrame) return gearStateRef.current;
-    const gearMs = Math.floor(fullFrame.timestampNs / 1_000_000);
-    const gearValue = fullFrame.values["gear"] ?? gearStateRef.current.committedGear;
-    gearStateRef.current = smoothGear(gearStateRef.current, gearValue, gearMs);
-    return gearStateRef.current;
-  }, [fullFrame]);
+  const { historyBuffer, historyVersion, rebuildBuffers, store } = useDashboardFrame(config?.polling.frameMs ?? 33);
 
   const trackPoints = useMemo(() => {
     const result: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }> = {};
@@ -83,11 +73,10 @@ export function LocalDashboardOverlay({
                   key={region.id}
                   containerWidth={viewportWidth}
                   containerHeight={viewportHeight}
-                  frame={fullFrame}
+                  store={store}
                   historyBuffer={historyBuffer}
                   historyVersion={historyVersion}
                   trackPoints={trackPoints}
-                  gearState={gearState}
                   layout={layout}
                   region={region}
                 />

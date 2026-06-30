@@ -1,12 +1,13 @@
 import { DashboardRegionRenderer } from "./dashboardRenderer";
+import { DashboardFrameStore } from "./useDashboardFrame";
 import type {
-  DashboardValuesFrame,
   LocalDashboardOverlayConfig,
   RegisteredDashboardLayout
 } from "./types";
 import styles from "./LocalDashboardOverlay.module.css";
 
-const previewFrame: DashboardValuesFrame = {
+const previewStore = new DashboardFrameStore();
+previewStore.setFrame({
   sampleTick: 0,
   timestampNs: 1_000_000_000,
   values: {
@@ -25,7 +26,7 @@ const previewFrame: DashboardValuesFrame = {
     bestLapDeltaTimeMs: -180,
     sessionLapDeltaTimeMs: 320,
   },
-};
+});
 
 const emptyHistoryBuffer = new Map();
 const emptyTrackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }> = {};
@@ -59,7 +60,7 @@ export function OverlayRegionPreview({
                 key={region.id}
                 containerWidth={width}
                 containerHeight={height}
-                frame={previewFrame}
+                store={previewStore}
                 historyBuffer={emptyHistoryBuffer}
                 historyVersion={0}
                 trackPoints={emptyTrackPoints}

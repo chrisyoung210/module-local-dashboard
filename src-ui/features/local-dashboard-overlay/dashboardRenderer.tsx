@@ -1,4 +1,5 @@
-import { memo, useMemo, useRef, useEffect, type CSSProperties } from "react";
+import { memo, useMemo, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import { useSyncExternalStore } from "react";
 import {
   formatGear,
   formatTelemetryValue,
@@ -17,6 +18,7 @@ import type {
   RegionRect,
   WidgetType,
 } from "./types";
+import type { DashboardFrameStore } from "./useDashboardFrame";
 import styles from "./LocalDashboardOverlay.module.css";
 
 // ── Color conversion ─────────────────────────────────────────────────
@@ -99,21 +101,19 @@ export function computeRegionRect(input: RegionPositionInput): RegionRect {
 export function DashboardRegionRenderer({
   containerWidth,
   containerHeight,
-  frame,
+  store,
   historyBuffer,
   historyVersion,
   trackPoints,
-  gearState,
   layout,
   region,
 }: {
   containerWidth: number;
   containerHeight: number;
-  frame: DashboardValuesFrame | null;
+  store: DashboardFrameStore;
   historyBuffer: Map<string, BufferEntry[]>;
   historyVersion: number;
   trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
-  gearState?: GearSmootherState;
   layout: DashboardLayoutPayload;
   region: OverlayRegionConfig;
 }) {
@@ -156,11 +156,10 @@ export function DashboardRegionRenderer({
           <DynamicDashboardControl
             key={control.id}
             control={control}
-            frame={frame}
+            store={store}
             historyBuffer={historyBuffer}
             historyVersion={historyVersion}
             trackPoints={trackPoints}
-            gearState={gearState}
           />
         ))}
       </div>
@@ -172,26 +171,43 @@ export function DashboardRegionRenderer({
 
 interface DynamicDashboardControlProps {
   control: DashboardControl;
-  frame: DashboardValuesFrame | null;
+  store: DashboardFrameStore;
   historyBuffer: Map<string, BufferEntry[]>;
   historyVersion: number;
   trackPoints: Record<string, { points: { x: number; z: number }[]; angleDeg: number; flipX: number; flipZ: number }>;
-  gearState?: GearSmootherState;
 }
 
 function resolveWidgetType(control: DashboardControl): WidgetType {
   return control.widgetType;
 }
 
+function useControlDepsVersion(
+  control: DashboardControl,
+  store: DashboardFrameStore,
+): string {
+  const dependencies = useMemo(() => controlDependencies(control), [control]);
+
+  return useSyncExternalStore(
+    store.subscribe.bind(store),
+    useCallback(() => {
+      return dependencies.map((d) => store.getFieldVersion(d)).join(",");
+    }, [dependencies, store]),
+  );
+}
+
 export const DynamicDashboardControl = memo(function DynamicDashboardControl({
   control,
-  frame,
+  store,
   historyBuffer,
   historyVersion,
   trackPoints,
-  gearState,
 }: DynamicDashboardControlProps) {
   const widgetType = resolveWidgetType(control);
+  const depsVersion = useControlDepsVersion(control, store);
+  void depsVersion;
+
+  const frame = store.getFrame();
+  const gearState = store.getGearState();
 
   switch (widgetType) {
     case "static":
@@ -222,7 +238,6 @@ function controlPropsAreEqual(
 ): boolean {
   if (
     previous.control !== next.control ||
-    previous.gearState !== next.gearState ||
     previous.historyBuffer !== next.historyBuffer ||
     previous.trackPoints !== next.trackPoints
   ) {
@@ -234,19 +249,7 @@ function controlPropsAreEqual(
     return previous.historyVersion === next.historyVersion;
   }
 
-  if (wt === "map") {
-    const tf = next.control.telemetryField || "normalizedCarPosition";
-    const pv = previous.frame?.values[tf];
-    const nv = next.frame?.values[tf];
-    return Object.is(pv, nv);
-  }
-
-  return controlFrameInputsAreEqual(
-    next.control,
-    previous.frame,
-    next.frame,
-    next.gearState !== undefined,
-  );
+  return true;
 }
 
 // ── Text widget ─────────────────────────────────────────────────────

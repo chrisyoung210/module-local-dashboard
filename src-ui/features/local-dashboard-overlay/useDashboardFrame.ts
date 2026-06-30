@@ -1,25 +1,82 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { DashboardControl, DashboardValuesFrame } from "./types";
+import { createInitialGearSmootherState, smoothGear, type GearSmootherState } from "./telemetryFormat";
 
-interface BufferEntry {
+export interface BufferEntry {
   t: number;
   v: number;
 }
 
-export function useDashboardFrame(frameMs: number = 16) {
-  const [fullFrame, setFullFrame] = useState<DashboardValuesFrame | null>(null);
-  const [historyVersion, setHistoryVersion] = useState(0);
-  const historyRef = useRef<Map<string, BufferEntry[]>>(new Map());
-  const fullFrameRef = useRef<Record<string, number>>({});
-  const fieldCapacitiesRef = useRef<Map<string, number>>(new Map());
-  const lastControlsRef = useRef<DashboardControl[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pendingFrameRef = useRef<DashboardValuesFrame | null>(null);
-  const rafScheduledRef = useRef(false);
+export class DashboardFrameStore {
+  private frame: DashboardValuesFrame | null = null;
+  private historyVersion = 0;
+  private historyBuffer: Map<string, BufferEntry[]> = new Map();
+  private fullFrameValues: Record<string, number> = {};
+  private fieldCapacities: Map<string, number> = new Map();
+  private fieldVersions: Map<string, number> = new Map();
+  private globalVersion = 0;
+  private gearState: GearSmootherState = createInitialGearSmootherState();
+  private listeners: Set<() => void> = new Set();
 
-  const rebuildBuffers = useCallback((chartControls: DashboardControl[]) => {
+  getFrame = (): DashboardValuesFrame | null => this.frame;
+
+  getHistoryVersion = (): number => this.historyVersion;
+
+  getHistoryBuffer = (): Map<string, BufferEntry[]> => this.historyBuffer;
+
+  getGlobalVersion = (): number => this.globalVersion;
+
+  getFieldVersion = (field: string): number => {
+    return this.fieldVersions.get(field) ?? 0;
+  };
+
+  getGearState = (): GearSmootherState => this.gearState;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  setFrame(frame: DashboardValuesFrame): void {
+    Object.assign(this.fullFrameValues, frame.values);
+    this.frame = {
+      sampleTick: frame.sampleTick,
+      timestampNs: frame.timestampNs,
+      values: { ...this.fullFrameValues },
+    };
+
+    const tsMs = Math.floor(frame.timestampNs / 1_000_000);
+    const buf = this.historyBuffer;
+    const capacities = this.fieldCapacities;
+
+    for (const [field, value] of Object.entries(frame.values)) {
+      this.fieldVersions.set(field, (this.fieldVersions.get(field) ?? 0) + 1);
+
+      const entries = buf.get(field);
+      if (!entries) continue;
+      entries.push({ t: tsMs, v: value });
+      const cap = capacities.get(field) ?? entries.length;
+      while (entries.length > cap) {
+        entries.shift();
+      }
+    }
+
+    this.historyVersion++;
+    this.globalVersion++;
+
+    const gearMs = Math.floor(frame.timestampNs / 1_000_000);
+    const gearValue = frame.values["gear"] ?? this.gearState.committedGear;
+    this.gearState = smoothGear(this.gearState, gearValue, gearMs);
+
+    this.listeners.forEach((l) => l());
+  }
+
+  rebuildBuffers = (chartControls: DashboardControl[]): void => {
     const nextCapacities = new Map<string, number>();
     const nextDefaults = new Map<string, number>();
 
@@ -38,7 +95,7 @@ export function useDashboardFrame(frameMs: number = 16) {
       }
     }
 
-    const buf = historyRef.current;
+    const buf = this.historyBuffer;
 
     for (const key of buf.keys()) {
       if (!nextCapacities.has(key)) {
@@ -55,52 +112,63 @@ export function useDashboardFrame(frameMs: number = 16) {
       buf.set(key, buffer);
     }
 
-    fieldCapacitiesRef.current = nextCapacities;
-    lastControlsRef.current = chartControls;
-  }, []);
+    this.fieldCapacities = nextCapacities;
+  };
 
-  const pushFrame = useCallback((frame: DashboardValuesFrame) => {
-    fullFrameRef.current = { ...fullFrameRef.current, ...frame.values };
-    setFullFrame({
-      sampleTick: frame.sampleTick,
-      timestampNs: frame.timestampNs,
-      values: { ...fullFrameRef.current },
-    });
+  clear(): void {
+    this.historyBuffer.clear();
+    this.fullFrameValues = {};
+    this.frame = null;
+    this.gearState = createInitialGearSmootherState();
+    this.historyVersion++;
+    this.globalVersion++;
+    this.listeners.forEach((l) => l());
+  }
+}
 
-    const tsMs = Math.floor(frame.timestampNs / 1_000_000);
-    const buf = historyRef.current;
-    const capacities = fieldCapacitiesRef.current;
+const store = new DashboardFrameStore();
 
-    for (const [field, value] of Object.entries(frame.values)) {
-      const entries = buf.get(field);
-      if (!entries) continue;
-      entries.push({ t: tsMs, v: value });
-      const cap = capacities.get(field) ?? entries.length;
-      while (entries.length > cap) {
-        entries.shift();
-      }
-    }
-    setHistoryVersion((v) => v + 1);
-  }, []);
+export function getDashboardFrameStore(): DashboardFrameStore {
+  return store;
+}
+
+export function useDashboardFrame(frameMs: number = 16) {
+  const fullFrame = useSyncExternalStore(
+    store.subscribe.bind(store),
+    store.getFrame.bind(store),
+  );
+  const historyVersion = useSyncExternalStore(
+    store.subscribe.bind(store),
+    store.getHistoryVersion.bind(store),
+  );
+  const historyBuffer = store.getHistoryBuffer();
+
+  const flushPendingFrameRef = useRef<DashboardValuesFrame | null>(null);
+  const rafScheduledRef = useRef(false);
 
   const handleClear = useCallback(() => {
-    historyRef.current.clear();
-    fullFrameRef.current = {};
-    setFullFrame(null);
-
-    const controls = lastControlsRef.current;
-    if (controls.length > 0) {
-      rebuildBuffers(controls);
+    store.clear();
+    const lastControls = lastControlsRef.current;
+    if (lastControls.length > 0) {
+      store.rebuildBuffers(lastControls);
     }
-  }, [rebuildBuffers]);
+  }, []);
 
   const flushPendingFrame = useCallback(() => {
     rafScheduledRef.current = false;
-    const frame = pendingFrameRef.current;
+    const frame = flushPendingFrameRef.current;
     if (!frame) return;
-    pendingFrameRef.current = null;
-    pushFrame(frame);
-  }, [pushFrame]);
+    flushPendingFrameRef.current = null;
+    store.setFrame(frame);
+  }, []);
+
+  const lastControlsRef = useRef<DashboardControl[]>([]);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const rebuildBuffers = useCallback((chartControls: DashboardControl[]) => {
+    store.rebuildBuffers(chartControls);
+    lastControlsRef.current = chartControls;
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -108,7 +176,7 @@ export function useDashboardFrame(frameMs: number = 16) {
     listen<DashboardValuesFrame>("dashboard://frame", (event) => {
       const frame = event.payload;
       if (frame && frame.values && Object.keys(frame.values).length > 0) {
-        pendingFrameRef.current = frame;
+        flushPendingFrameRef.current = frame;
         if (!rafScheduledRef.current) {
           rafScheduledRef.current = true;
           requestAnimationFrame(flushPendingFrame);
@@ -117,7 +185,6 @@ export function useDashboardFrame(frameMs: number = 16) {
     }).then((fn) => {
       unlisten = fn;
     }).catch(() => {
-      // listen failed, polling fallback will handle it
     });
 
     return () => {
@@ -130,7 +197,7 @@ export function useDashboardFrame(frameMs: number = 16) {
       try {
         const frame = await invoke<DashboardValuesFrame | null>("poll_dashboard_frame");
         if (frame) {
-          pendingFrameRef.current = frame;
+          flushPendingFrameRef.current = frame;
           if (!rafScheduledRef.current) {
             rafScheduledRef.current = true;
             requestAnimationFrame(flushPendingFrame);
@@ -139,7 +206,6 @@ export function useDashboardFrame(frameMs: number = 16) {
           handleClear();
         }
       } catch {
-        // acc-coach may not have registered poll_dashboard_frame yet
       }
     };
 
@@ -159,8 +225,9 @@ export function useDashboardFrame(frameMs: number = 16) {
 
   return {
     fullFrame,
-    historyBuffer: historyRef.current,
+    historyBuffer,
     historyVersion,
     rebuildBuffers,
+    store,
   };
 }
